@@ -1,0 +1,14 @@
+{
+  "name": "storyteller-workspace",
+  "private": true,
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev": "npm run --workspace storyteller dev",
+    "typecheck": "npm run --workspace storyteller typecheck",
+    "build": "npm run --workspace storyteller build",
+    "test": "npm run --workspace storyteller test",
+    "desktop": "npm run --workspace storyteller desktop",
+    "image-lab": "npm run --workspace @storyteller/image-lab start"
+  },
+  "devDependencies": {"@types/node":"latest"}
+}

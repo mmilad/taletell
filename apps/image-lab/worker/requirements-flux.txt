@@ -1,0 +1,8 @@
+# Optional real Flux.2 worker dependencies.
+# Install these only on a machine with sufficient memory/GPU:
+torch
+diffusers
+transformers
+accelerate
+safetensors
+Pillow
