@@ -51,7 +51,7 @@ DELETE /api/projects/:id
 
 Default file: `data/storyteller.sqlite`. Generated example sheets are copied into `data/assets/` and served from `/library/{id}.png`, so they survive restarting the dev server. `STORYTELLER_STORE=memory` keeps stories in process memory. `STORYTELLER_SQLITE` overrides the SQLite path.
 
-The analysis and image steps are deliberately provider-free mocks for this milestone. They preserve the domain boundary needed for later local or remote AI providers without requiring API keys.
+Story generation uses a local Ollama model when one is running, and falls back to the template writer if it is not. Image generation stays on the Flux worker. Both keep the domain boundary: models write into character, location, and scene modules instead of owning the project.
 
 Image generation is organized by subject (`character`, `location`, `prop`, or `scene`). The JSON-lines worker at `apps/image-lab/worker/flux_worker.py` is the direct Flux.2 execution boundary: it runs safely in mock mode by default and only loads large Flux dependencies when `STORYTELLER_FLUX_MODE=real` is explicitly enabled.
 
@@ -74,3 +74,19 @@ python -m venv .venv
 Restart `npm run dev`. The header should change from **Mock images** to **Flux · your GPU**. Then use **Generate portrait** on a character. The first run downloads `black-forest-labs/FLUX.2-klein-4B` and writes PNGs into `generated-assets/`.
 
 `npm run desktop` uses the same worker. Force mock or real with `STORYTELLER_FLUX_MODE`. Override the model with `STORYTELLER_FLUX_MODEL`. Real inference needs about 13GB VRAM for Klein 4B.
+
+## Local stories (Ollama)
+
+**Generate story** is no longer instant keyword templates when Ollama is running. The authoring app calls `/api/generate-story`, which asks a local chat model for JSON (title, prose, characters, places, scenes) and hydrates that into the same editable modules as before.
+
+Ollama is already enough — there is no extra Python worker. Install a chat model if you do not have one:
+
+```powershell
+ollama pull llama3:instruct
+```
+
+Restart `npm run dev`. The header should change from **Template stories** to **Ollama · model**. The first write after a model load can take a minute; later ones are usually a few seconds.
+
+Defaults, in order: `qwen3.5:latest`, `llama3:instruct`, `llama3:latest`, then the first non-embedding model Ollama reports. Override with `STORYTELLER_LLM_MODEL`. Point at another host with `STORYTELLER_OLLAMA_URL`. Force the old templates with `STORYTELLER_STORY_MODE=template`, or require Ollama with `STORYTELLER_STORY_MODE=ollama`.
+
+Flux and Ollama both want the GPU. Write the story first, then generate sheets — running both at once can run out of VRAM.

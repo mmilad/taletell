@@ -4,8 +4,9 @@ import './styles.css';
 import { projectApi } from './api/client';
 import { publicAssetRef, summarizeStory, type StorySummary } from './api/store';
 import { analyzeStory, createId, normalizeProject, type Project, type Scene } from './domain';
-import { characterVisualPrompt, generateCharacter, generateLocation, generateScene, generateStory, keyCharacters, locationVisualPrompt, missingKeyExamples, sceneReferenceCast, sceneVisualPrompt, type StoryAge, type StoryTone } from './generate';
+import { characterVisualPrompt, generateCharacter, generateLocation, generateScene, keyCharacters, locationVisualPrompt, missingKeyExamples, sceneReferenceCast, sceneVisualPrompt, type StoryAge, type StoryTone } from './generate';
 import { displayImageSrc, generateImages, getImageStatus, type ImageStatus } from './image-bridge';
+import { generateStoryDraft, getStoryStatus, type StoryStatus } from './story-bridge';
 
 const CURRENT_KEY='storyteller.currentProjectId';
 const LEGACY_KEY='storyteller.project.v1';
@@ -25,6 +26,9 @@ function App(){
   const projectRef=React.useRef<Project|undefined>(undefined);
   const skipSave=React.useRef(true);
   const [imageStatus,setImageStatus]=useState<ImageStatus>({ok:false,mode:'mock',ready:false,detail:'Checking image worker…'});
+  const [storyStatus,setStoryStatus]=useState<StoryStatus>({ok:false,mode:'template',ready:false,detail:'Checking story writer…'});
+  const [writing,setWriting]=useState(false);
+  const writeAbort=React.useRef<AbortController|undefined>(undefined);
   projectRef.current=project;
   const remember=(next:Project,list?:StorySummary[])=>{
     skipSave.current=true;
@@ -79,6 +83,7 @@ function App(){
     return ()=>clearTimeout(timer);
   },[project]);
   useEffect(()=>{getImageStatus().then(setImageStatus).catch(error=>setImageStatus({ok:false,mode:'mock',ready:false,detail:error instanceof Error?error.message:'Image worker is not available.'}))},[]);
+  useEffect(()=>{getStoryStatus().then(setStoryStatus).catch(error=>setStoryStatus({ok:false,mode:'template',ready:false,detail:error instanceof Error?error.message:'Story writer is not available.'}))},[]);
   useEffect(()=>{
     const flush=()=>{
       const current=projectRef.current;
@@ -137,19 +142,38 @@ function App(){
     patch(analyzeStory(project.sourceText));
     setTab('bible');
   };
-  const runStoryGeneration=(brief:{premise:string;tone:StoryTone;age:StoryAge;reuseCast:boolean})=>{
+  const runStoryGeneration=async(brief:{premise:string;tone:StoryTone;age:StoryAge;reuseCast:boolean})=>{
     if(!project||!brief.premise.trim()) return;
-    const keepCast=brief.reuseCast&&(project.characters.length>0||project.locations.length>0);
+    if(writing){
+      writeAbort.current?.abort();
+      return;
+    }
+    const latest=projectRef.current||project;
+    const keepCast=brief.reuseCast&&(latest.characters.length>0||latest.locations.length>0);
     if(!keepCast&&!replaceDrafts()) return;
-    const generated=generateStory({
-      premise:brief.premise,
-      tone:brief.tone,
-      age:brief.age,
-      characters:keepCast?project.characters:undefined,
-      locations:keepCast?project.locations:undefined
-    });
-    patch(keepCast?{...generated,characters:project.characters,locations:project.locations}:generated);
-    setTab('bible');
+    const controller=new AbortController();
+    writeAbort.current=controller;
+    setWriting(true);
+    try {
+      const generated=await generateStoryDraft({
+        premise:brief.premise,
+        tone:brief.tone,
+        age:brief.age,
+        characters:keepCast?latest.characters:undefined,
+        locations:keepCast?latest.locations:undefined
+      },controller.signal);
+      if(controller.signal.aborted) return;
+      patch(generated);
+      setTab('bible');
+    } catch(error) {
+      if(error instanceof DOMException&&error.name==='AbortError') return;
+      window.alert(error instanceof Error?error.message:'Could not write the story.');
+    } finally {
+      if(writeAbort.current===controller){
+        writeAbort.current=undefined;
+        setWriting(false);
+      }
+    }
   };
   const generateAsset=async(kind:AssetKind,id:string)=>{
     const latest=projectRef.current;
@@ -245,22 +269,23 @@ function App(){
     event.target.value='';
   };
   if (!project) return <div className="app"><header><div className="brand"><span className="mark">✦</span><div><strong>Storyteller</strong><small>authoring studio</small></div></div><div className="save">Opening library…</div></header><main><section className="content"><p className="lede">Opening the story library…</p></section></main></div>;
-  return <div className="app"><header><div className="brand"><span className="mark">✦</span><div><strong>Storyteller</strong><small>authoring studio</small></div></div><div className="save">{saved?'Saved':'Saving…'}</div><span className={imageStatus.ready?'pill ready':'pill'}>{imageStatus.ready?`Flux · ${imageStatus.gpu||imageStatus.device||'ready'}`:imageStatus.mode==='real'?'Flux starting…':'Mock images'}</span><button className="primary" onClick={()=>{void newStory()}}>New story</button></header>
+  return <div className="app"><header><div className="brand"><span className="mark">✦</span><div><strong>Storyteller</strong><small>authoring studio</small></div></div><div className="save">{saved?'Saved':'Saving…'}</div><span className={storyStatus.ready?'pill ready':'pill'}>{storyStatus.ready?`Ollama · ${(storyStatus.model||'local').replace(/:latest$/,'')}`:writing?'Writing…':'Template stories'}</span><span className={imageStatus.ready?'pill ready':'pill'}>{imageStatus.ready?`Flux · ${imageStatus.gpu||imageStatus.device||'ready'}`:imageStatus.mode==='real'?'Flux starting…':'Mock images'}</span><button className="primary" onClick={()=>{void newStory()}}>New story</button></header>
   <main><aside><div className="stories-heading"><p className="eyebrow">STORIES</p><button className="new-story" onClick={()=>{void newStory()}}>＋ New story</button></div><div className="story-list">{stories.map(item=><button key={item.id} className={item.id===project.id?'story-item selected':'story-item'} onClick={()=>{void openStory(item.id)}}><span className="story-dot">✦</span><span>{item.title||'Untitled story'}</span></button>)}</div><div className="story-workspace"><p className="eyebrow">CURRENT STORY</p><button className={tab==='story'?'nav active':'nav'} onClick={()=>setTab('story')}>▣ <span>Story</span></button><button className={tab==='bible'?'nav active':'nav'} onClick={()=>setTab('bible')}>◈ <span>Story bible</span><i>{project.characters.length+project.locations.length||''}</i></button><button className={tab==='scenes'?'nav active':'nav'} onClick={()=>setTab('scenes')}>▤ <span>Scenes</span><i>{project.scenes.length||''}</i></button></div><div className="side-note"><span>PROJECT API</span><p>Stories are saved through the project API. SQLite is the first store; the database can be replaced without changing this UI.</p><div className="project-actions"><button onClick={exportProject}>Export project</button><label>Import project<input type="file" accept="application/json,.json" onChange={importProject}/></label>{stories.length>1&&<button onClick={()=>{void deleteStory()}}>Delete story</button>}</div></div></aside>
-  <section className="content">{tab==='story'&&<Story key={formKey} project={project} patch={patch} analyze={runAnalysis} generate={runStoryGeneration} loadExample={()=>{patch({...exampleStory,characters:[],locations:[],scenes:[]});setTab('story')}}/>}{tab==='bible'&&<Bible project={project} patch={patch} generateAsset={generateAsset} generateKeyExamples={generateKeyExamples} generating={generating} imageStatus={imageStatus} goScenes={()=>setTab('scenes')}/>}{tab==='scenes'&&<Scenes project={project} patch={patch} generateAsset={generateAsset} generateKeyExamples={generateKeyExamples} generating={generating} imageStatus={imageStatus}/>}</section></main></div>;
+  <section className="content">{tab==='story'&&<Story key={formKey} project={project} patch={patch} analyze={runAnalysis} generate={runStoryGeneration} writing={writing} storyStatus={storyStatus} loadExample={()=>{patch({...exampleStory,characters:[],locations:[],scenes:[]});setTab('story')}}/>}{tab==='bible'&&<Bible project={project} patch={patch} generateAsset={generateAsset} generateKeyExamples={generateKeyExamples} generating={generating} imageStatus={imageStatus} goScenes={()=>setTab('scenes')}/>}{tab==='scenes'&&<Scenes project={project} patch={patch} generateAsset={generateAsset} generateKeyExamples={generateKeyExamples} generating={generating} imageStatus={imageStatus}/>}</section></main></div>;
 }
 
-function Story({project,patch,analyze,generate,loadExample}:{project:Project;patch:(p:Partial<Project>)=>void;analyze:()=>void;generate:(brief:{premise:string;tone:StoryTone;age:StoryAge;reuseCast:boolean})=>void;loadExample:()=>void}){
+function Story({project,patch,analyze,generate,writing,storyStatus,loadExample}:{project:Project;patch:(p:Partial<Project>)=>void;analyze:()=>void;generate:(brief:{premise:string;tone:StoryTone;age:StoryAge;reuseCast:boolean})=>void;writing:boolean;storyStatus:StoryStatus;loadExample:()=>void}){
   const [premise,setPremise]=useState(project.sourceText?`A story like: ${project.title}`:'');
   const [tone,setTone]=useState<StoryTone>('gentle');
   const [age,setAge]=useState<StoryAge>('5-7');
   const [reuseCast,setReuseCast]=useState(false);
   const hasModules=project.characters.length>0||project.locations.length>0;
+  const writer=storyStatus.ready?`Ollama · ${(storyStatus.model||'local').replace(/:latest$/,'')}`:'Template writer';
   return <>
     <div className="hero"><p className="eyebrow">A NEW STORY</p><h1>Generate a story from<br/><em>modular pieces.</em></h1><p className="lede">Start with a premise, or paste words you already have. Storyteller builds reusable characters, places, and scenes you can keep editing.</p></div>
-    <div className="card input-card"><label>STORY PREMISE</label><textarea value={premise} onChange={e=>setPremise(e.target.value)} placeholder="A shy rabbit who wants to sing at the village fair…"/><div className="choice-row"><div><span className="choice-label">TONE</span><div className="chips">{(['gentle','adventurous','funny'] as StoryTone[]).map(value=><button key={value} className={tone===value?'chip active':'chip'} onClick={()=>setTone(value)}>{value}</button>)}</div></div><div><span className="choice-label">AGES</span><div className="chips">{(['3-5','5-7','7-9'] as StoryAge[]).map(value=><button key={value} className={age===value?'chip active':'chip'} onClick={()=>setAge(value)}>{value}</button>)}</div></div></div>{hasModules&&<label className="reuse"><input type="checkbox" checked={reuseCast} onChange={e=>setReuseCast(e.target.checked)}/> Write the new story with the current character and place modules</label>}<div className="card-footer"><span>{premise.trim().split(/\s+/).filter(Boolean).length} words</span><button className="primary" disabled={!premise.trim()} onClick={()=>generate({premise,tone,age,reuseCast})}>Generate story <span>→</span></button></div></div>
+    <div className="card input-card"><label>STORY PREMISE</label><textarea value={premise} onChange={e=>setPremise(e.target.value)} placeholder="A shy rabbit who wants to sing at the village fair…"/><div className="choice-row"><div><span className="choice-label">TONE</span><div className="chips">{(['gentle','adventurous','funny'] as StoryTone[]).map(value=><button key={value} className={tone===value?'chip active':'chip'} onClick={()=>setTone(value)}>{value}</button>)}</div></div><div><span className="choice-label">AGES</span><div className="chips">{(['3-5','5-7','7-9'] as StoryAge[]).map(value=><button key={value} className={age===value?'chip active':'chip'} onClick={()=>setAge(value)}>{value}</button>)}</div></div></div>{hasModules&&<label className="reuse"><input type="checkbox" checked={reuseCast} onChange={e=>setReuseCast(e.target.checked)}/> Write the new story with the current character and place modules</label>}<div className="card-footer"><span>{writing?'Writing the story…':`${premise.trim().split(/\s+/).filter(Boolean).length} words · ${writer}`}</span><button className="primary" disabled={!writing&&!premise.trim()} onClick={()=>generate({premise,tone,age,reuseCast})}>{writing?'Cancel':<>Generate story <span>→</span></>}</button></div></div>
     <div className="card input-card"><label>STORY TITLE</label><input value={project.title} onChange={e=>patch({title:e.target.value})} placeholder="The title of your story"/><label>ORIGINAL STORY TEXT</label><textarea value={project.sourceText} onChange={e=>patch({sourceText:e.target.value})} placeholder="Paste a children's story here…"/><div className="card-footer"><span>{project.sourceText.trim().split(/\s+/).filter(Boolean).length} words</span><div className="story-actions"><button className="ghost" onClick={loadExample}>Load example</button><button className="primary" disabled={!project.sourceText.trim()} onClick={analyze}>Analyze story <span>→</span></button></div></div></div>
-    <div className="tip"><span>✦</span><p><strong>How it works</strong><br/>Generation creates editable character, place, and scene modules. Nothing is locked until you keep it.</p></div>
+    <div className="tip"><span>✦</span><p><strong>How it works</strong><br/>{storyStatus.ready?'A local Ollama model writes the story into editable character, place, and scene modules.':'Start Ollama to write with a local model; until then, Generate story uses the template writer.'} Nothing is locked until you keep it.</p></div>
   </>;
 }
 

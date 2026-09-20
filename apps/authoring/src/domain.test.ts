@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeStory, normalizeProject } from './domain';
+import { analyzeStory, createCharacter, createLocation, normalizeProject } from './domain';
 import { characterVisualPrompt, generateCharacter, generateScene, generateStory, missingKeyExamples, sceneVisualPrompt } from './generate';
+import { extractJson, parseStoryDraft } from './story-draft';
 import { createPlaybackManifest } from './playback';
 import { composeImageRequest } from '../../../packages/image-provider/src/prompt';
 describe('MVP project invariants',()=>{it('keeps the authoring model provider-neutral',()=>{const project={sourceText:'A story',characters:[],locations:[],scenes:[]};expect(project).not.toHaveProperty('provider');expect(project.sourceText).toBe('A story')});it('supports non-destructive scene variants conceptually',()=>{const scene={imageStatus:'generated',selectedImage:'variant-a'};const variants=[scene.selectedImage,'variant-b'];expect(variants).toHaveLength(2);expect(scene.selectedImage).toBe('variant-a')})});
@@ -91,5 +92,42 @@ describe('modular generation',()=>{
     const project=normalizeProject({id:'old',title:'Old',sourceText:'x',updatedAt:'',characters:[{id:'c',name:'Lina',role:'hero',description:'a fox',traits:[]}] as never,locations:[],scenes:[]});
     expect(project.characters[0].appearance).toContain('fox');
     expect(project.characters[0].imageStatus).toBe('empty');
+  });
+});
+describe('local story draft',()=>{
+  it('reads JSON even when the model wraps it in a fence',()=>{
+    const parsed=extractJson('Sure.\n```json\n{"title":"Pip"}\n```');
+    expect(parsed).toEqual({title:'Pip'});
+  });
+  it('hydrates characters, places, and scene name refs into domain modules',()=>{
+    const story=parseStoryDraft({
+      title:'Tomo in the Wild',
+      sourceText:'Tomo met Reed by the river.',
+      characters:[
+        {name:'Tomo',role:'hero',key:true,description:'a little dog',appearance:'a warm tan puppy with floppy ears',traits:['curious']},
+        {name:'Reed',role:'friend',key:true,description:'a frog',appearance:'a pea-green frog with a lily-pad hat'}
+      ],
+      locations:[{name:'Singing River',description:'A bright river over smooth stones.'}],
+      scenes:[{summary:'They meet',sourceText:'Tomo met Reed by the river.',visualDescription:'Two friends at the water.',characterNames:['Tomo','Reed'],locationName:'Singing River'}]
+    });
+    expect(story.title).toBe('Tomo in the Wild');
+    expect(story.characters.map(character=>character.name)).toEqual(['Tomo','Reed']);
+    expect(story.scenes[0].characterIds).toEqual(story.characters.map(character=>character.id));
+    expect(story.scenes[0].locationId).toBe(story.locations[0].id);
+  });
+  it('keeps existing character ids when rewriting a story with the same cast',()=>{
+    const tomo=createCharacter({name:'Tomo',role:'hero',description:'a little dog',appearance:'a tan puppy',traits:['loyal'],key:true,imageStatus:'generated',selectedImage:'/library/tomo.png'});
+    const river=createLocation({name:'Singing River',description:'bright water'});
+    const story=parseStoryDraft({
+      title:'Friends in the wild',
+      characters:[{name:'Tomo'},{name:'Nim'}],
+      locations:[{name:'Mossy Trail',description:'a narrow forest path'}],
+      scenes:[{summary:'Tomo walks',sourceText:'Tomo walked the mossy trail.',characterNames:['Tomo'],locationName:'Mossy Trail'}]
+    },{characters:[tomo],locations:[river]});
+    expect(story.characters[0].id).toBe(tomo.id);
+    expect(story.characters[0].selectedImage).toBe('/library/tomo.png');
+    expect(story.characters.map(character=>character.name)).toEqual(['Tomo','Nim']);
+    expect(story.locations[0].id).toBe(river.id);
+    expect(story.locations.map(location=>location.name)).toEqual(['Singing River','Mossy Trail']);
   });
 });
