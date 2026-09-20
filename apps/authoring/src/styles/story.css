@@ -1,0 +1,45 @@
+.hero { max-width: 670px; }
+.hero h1 {
+  font: 600 54px/1.05 "Playfair Display";
+  margin: 0 0 20px;
+  letter-spacing: -0.03em;
+}
+.hero h1 em { color: #cb7950; }
+.tip {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin: 22px 2px;
+  color: #888278;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.tip span { color: #e58c55; font-size: 18px; }
+.tip p { margin: 0; }
+.tip strong { color: #4e4a41; }
+.reuse {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 0;
+  color: #6f6a60;
+  font-size: 13px;
+}
+.reuse input { width: auto; }
+.story-actions { display: flex; gap: 9px; align-items: center; }
+.write-note { margin: 0 0 16px; max-width: none; }
+.input-card input.manuscript-title {
+  font: 600 28px "Playfair Display";
+  border-color: transparent;
+  background: transparent;
+  padding: 0 0 12px;
+  margin-bottom: 12px;
+}
+.input-card textarea.manuscript {
+  height: 280px;
+  font-size: 16px;
+  line-height: 1.65;
+}
+@media (max-width: 800px) {
+  .hero h1 { font-size: 42px; }
+}

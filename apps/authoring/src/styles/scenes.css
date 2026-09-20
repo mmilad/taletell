@@ -1,0 +1,47 @@
+.scene-list { display: grid; gap: 16px; }
+.scene { display: flex; padding: 20px; gap: 18px; }
+.scene-num { font: 12px "DM Mono"; color: #c18c6b; padding-top: 5px; }
+.scene-main { flex: 1; min-width: 0; }
+.scene-summary {
+  font: 600 20px "Playfair Display";
+  border-color: transparent !important;
+  background: transparent !important;
+  padding: 0 !important;
+  resize: none;
+  height: 31px;
+}
+.source { font-size: 12px; line-height: 1.5; color: #888278; margin: 7px 0 20px; }
+.scene textarea {
+  display: block;
+  width: 100%;
+  border: 1px solid #dedad1;
+  background: #fffefa;
+  border-radius: 4px;
+  padding: 11px;
+  color: #34312a;
+  outline: none;
+}
+.scene textarea:not(.scene-summary) {
+  font-size: 12px;
+  line-height: 1.5;
+  min-height: 56px;
+  resize: vertical;
+  margin-bottom: 17px;
+}
+.scene-actions { display: flex; gap: 9px; align-items: center; }
+.module-refs { font: 11px "DM Mono"; color: #b07a55; margin: -8px 0 16px; }
+.scene-compose { margin-bottom: 22px; max-width: none; }
+.module-pick { margin-top: 16px; }
+.mock-image {
+  background: linear-gradient(135deg, #e9c09d, #a9b5a0);
+  height: 55px;
+  flex: 1;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 12px;
+  color: #fff;
+  font-size: 20px;
+}
+.mock-image span { font: 11px "DM Mono"; text-shadow: 0 1px 2px #333; }

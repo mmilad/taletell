@@ -34,7 +34,7 @@ The repository is now an npm workspace. `packages/image-provider` defines the sm
 
 1. Create or paste a story.
 2. Run lightweight draft analysis for characters, locations, and scenes.
-3. Review and edit the story bible.
+3. Review and edit characters, places, and scenes.
 4. Review scene summaries and visual descriptions.
 5. Generate/select mock image variants.
 6. Reopen stories from the project API (SQLite on disk), or export/import a `.story.json` project file.
