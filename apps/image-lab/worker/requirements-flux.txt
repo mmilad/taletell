@@ -1,7 +1,15 @@
 # Optional real Flux.2 worker dependencies.
-# Install these only on a machine with sufficient memory/GPU:
+# Install these only on a machine with sufficient memory/GPU.
+#
+# Windows + NVIDIA (this repo's default):
+#   python -m venv .venv
+#   .venv\Scripts\python.exe -m pip install --upgrade pip
+#   .venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu124
+#   .venv\Scripts\python.exe -m pip install -r requirements-flux.txt
+#
+# Flux.2 Klein lives in current Diffusers, not always in the latest PyPI wheel.
 torch
-diffusers
+git+https://github.com/huggingface/diffusers.git
 transformers
 accelerate
 safetensors

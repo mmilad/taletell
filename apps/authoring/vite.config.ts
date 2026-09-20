@@ -1,3 +1,8 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
-export default defineConfig({ plugins: [react()] });
+import { storytellerApiPlugin } from './vite-api-plugin.ts';
+import { storytellerImagePlugin } from './vite-image-plugin.ts';
+
+export default defineConfig({
+  plugins: [react(), storytellerApiPlugin(), storytellerImagePlugin()]
+});

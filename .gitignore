@@ -2,5 +2,9 @@ node_modules/
 .venv/
 dist/
 generated-assets/
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
 *.tsbuildinfo
 .DS_Store

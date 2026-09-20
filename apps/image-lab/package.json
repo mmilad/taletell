@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "scripts": {"start":"tsx src/index.ts"},
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "status": "python worker/flux_worker.py status"
+  },
   "dependencies": {"@storyteller/image-provider":"*"}
 }

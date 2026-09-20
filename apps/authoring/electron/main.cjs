@@ -1,12 +1,74 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
+const fs = require('node:fs');
 const path = require('node:path');
 const { spawn } = require('node:child_process');
 
-const repoRoot = path.resolve(__dirname, '..', '..');
-const workerPath = path.join(repoRoot, 'apps', 'image-lab', 'worker', 'flux_worker.py');
-const defaultPython = path.join(repoRoot, 'apps', 'image-lab', 'worker', '.venv', 'bin', 'python');
-const defaultOutputDirectory = path.join(repoRoot, 'generated-assets');
+const repoRoot = path.resolve(__dirname, '..', '..', '..');
+const workerRoot = path.join(repoRoot, 'apps', 'image-lab', 'worker');
+const workerPath = path.join(workerRoot, 'flux_worker.py');
+const defaultOutputDirectory = process.env.STORYTELLER_FLUX_OUTPUT_DIR || path.join(repoRoot, 'generated-assets');
 const generationTimeoutMs = Number(process.env.STORYTELLER_FLUX_TIMEOUT_MS || 15 * 60 * 1000);
+
+function resolvePython() {
+  if (process.env.STORYTELLER_PYTHON) return process.env.STORYTELLER_PYTHON;
+  const windows = path.join(workerRoot, '.venv', 'Scripts', 'python.exe');
+  const posix = path.join(workerRoot, '.venv', 'bin', 'python');
+  if (fs.existsSync(windows)) return windows;
+  if (fs.existsSync(posix)) return posix;
+  return process.platform === 'win32' ? 'python' : 'python3';
+}
+
+function workerEnv() {
+  const env = { ...process.env };
+  const hasVenv = fs.existsSync(path.join(workerRoot, '.venv', 'Scripts', 'python.exe')) || fs.existsSync(path.join(workerRoot, '.venv', 'bin', 'python'));
+  env.STORYTELLER_FLUX_MODE = env.STORYTELLER_FLUX_MODE || (hasVenv ? 'real' : 'mock');
+  env.STORYTELLER_FLUX_MODEL = env.STORYTELLER_FLUX_MODEL || 'black-forest-labs/FLUX.2-klein-4B';
+  return env;
+}
+
+let worker;
+let stdout = '';
+const queue = [];
+
+function ensureWorker() {
+  if (worker) return worker;
+  worker = spawn(resolvePython(), ['-u', workerPath], { env: workerEnv(), cwd: repoRoot });
+  worker.stdout.on('data', (chunk) => {
+    stdout += chunk.toString();
+    const lines = stdout.split(/\r?\n/);
+    stdout = lines.pop() || '';
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      const pending = queue.shift();
+      if (!pending) continue;
+      try { pending.resolve(JSON.parse(line)); }
+      catch (error) { pending.reject(error); }
+    }
+  });
+  worker.stderr.on('data', (chunk) => { process.stderr.write(chunk); });
+  worker.on('error', (error) => {
+    const pending = queue.shift();
+    if (pending) pending.reject(error);
+  });
+  worker.on('close', (code, signal) => {
+    const pending = queue.shift();
+    if (pending) pending.reject(new Error(`Image worker exited with ${code ?? signal}`));
+    worker = undefined;
+  });
+  return worker;
+}
+
+function askWorker(request) {
+  return new Promise((resolve, reject) => {
+    const child = ensureWorker();
+    const timer = setTimeout(() => reject(new Error(`Image generation timed out after ${Math.round(generationTimeoutMs / 60000)} minutes.`)), generationTimeoutMs);
+    queue.push({
+      resolve: (value) => { clearTimeout(timer); resolve(value); },
+      reject: (error) => { clearTimeout(timer); reject(error); }
+    });
+    child.stdin.write(`${JSON.stringify({ ...request, outputDirectory: request.outputDirectory || defaultOutputDirectory })}\n`);
+  });
+}
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -19,32 +81,17 @@ function createWindow() {
   window.loadFile(path.join(__dirname, '..', 'dist', 'index.html'));
 }
 
-ipcMain.handle('generate-images', async (_event, request) => new Promise((resolve, reject) => {
-  const workerPython = process.env.STORYTELLER_PYTHON || defaultPython;
-  const childEnv = { ...process.env };
-  const configuredMode = process.env.STORYTELLER_FLUX_MODE === 'real' ? 'real' : 'mock';
-  childEnv.STORYTELLER_FLUX_MODE = configuredMode;
-  childEnv.STORYTELLER_FLUX_MODEL = process.env.STORYTELLER_FLUX_MODEL || 'black-forest-labs/FLUX.2-klein-4B';
-  const outputDirectory = request.outputDirectory || process.env.STORYTELLER_FLUX_OUTPUT_DIR || defaultOutputDirectory;
-  const childRequest = { ...request, outputDirectory };
-  const worker = spawn(workerPython, ['-u', workerPath], { env: childEnv, cwd: repoRoot });
-  let stdout = '';
-  let stderr = '';
-  let settled = false;
-  const finish = (fn, value) => { if (settled) return; settled = true; clearTimeout(timeout); fn(value); };
-  const timeout = setTimeout(() => { worker.kill('SIGTERM'); finish(reject, new Error(`Image generation timed out after ${Math.round(generationTimeoutMs / 60000)} minutes.`)); }, generationTimeoutMs);
-  worker.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
-  worker.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
-  worker.on('error', (error) => finish(reject, error));
-  worker.on('close', (code, signal) => {
-    try {
-      const line = stdout.trim().split(/\r?\n/).filter(Boolean).pop();
-      const result = line ? JSON.parse(line) : {};
-      if (code !== 0 || !result.ok) finish(reject, new Error(result.detail || result.error || stderr.trim() || `Worker exited with ${code ?? signal}`));
-      else finish(resolve, result);
-    } catch (error) { finish(reject, new Error(`Invalid image worker response: ${error.message}`)); }
+ipcMain.handle('generate-images', async (_event, request) => askWorker(request));
+ipcMain.handle('image-status', async () => new Promise((resolve, reject) => {
+  const probe = spawn(resolvePython(), ['-u', workerPath, 'status'], { env: workerEnv(), cwd: repoRoot });
+  let output = '';
+  probe.stdout.on('data', (chunk) => { output += chunk.toString(); });
+  probe.stderr.on('data', (chunk) => { output += chunk.toString(); });
+  probe.on('error', reject);
+  probe.on('close', () => {
+    try { resolve(JSON.parse(output.trim().split(/\r?\n/).filter(Boolean).pop() || '{}')); }
+    catch (error) { reject(error); }
   });
-  worker.stdin.end(`${JSON.stringify(childRequest)}\n`);
 }));
 
 app.whenReady().then(() => {

@@ -2,18 +2,33 @@
 
 The worker reads one JSON request per line from stdin and writes one JSON result per line to stdout. It supports `character`, `location`, `prop`, and `scene` subjects, plus typed reference assets and multiple variants.
 
+`npm run image-lab` is only a tiny harness. It does **not** install Flux or make the authoring UI draw real portraits. The authoring app talks to this worker.
+
+## Windows + NVIDIA setup
+
+From `apps/image-lab/worker`:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu124
+.\.venv\Scripts\python.exe -m pip install -r requirements-flux.txt
+```
+
+Then restart the authoring app. If the `.venv` exists, `npm run dev` now calls this worker in real mode. The first **Generate portrait** downloads `black-forest-labs/FLUX.2-klein-4B` and can take several minutes. Later sheets reuse the loaded pipeline.
+
+Check the worker without opening the UI:
+
+```powershell
+.\.venv\Scripts\python.exe flux_worker.py status
+```
+
+## Mock mode
+
 The default mode is mock and has no ML dependencies:
 
 ```sh
-printf '%s\n' '{"subject":"character","prompt":"A friendly fox","variants":2}' | python3 -B flux_worker.py
+printf '%s\n' '{"subject":"character","prompt":"A friendly fox","variants":2}' | python -B flux_worker.py
 ```
 
-For real local inference, install `requirements-flux.txt` into the worker environment, download the selected Flux.2 weights, and opt in explicitly. The default is the smaller Flux.2 Klein 4B model; use `STORYTELLER_FLUX_MODEL` to select another model.
-
-```sh
-STORYTELLER_FLUX_MODE=real \
-STORYTELLER_FLUX_MODEL=black-forest-labs/FLUX.2-klein-4B \
-.venv/bin/python flux_worker.py
-```
-
-The model is intentionally not installed as part of the JavaScript application: its weights and hardware requirements are too large for a normal app dependency.
+Override the model with `STORYTELLER_FLUX_MODEL`, the output folder with `STORYTELLER_FLUX_OUTPUT_DIR`, and the timeout with `STORYTELLER_FLUX_TIMEOUT_MS`. The 4B Klein checkpoint needs roughly 13GB VRAM.

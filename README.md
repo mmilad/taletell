@@ -37,7 +37,19 @@ The repository is now an npm workspace. `packages/image-provider` defines the sm
 3. Review and edit the story bible.
 4. Review scene summaries and visual descriptions.
 5. Generate/select mock image variants.
-6. Reopen the project from local browser storage, or export/import a `.story.json` project file.
+6. Reopen stories from the project API (SQLite on disk), or export/import a `.story.json` project file.
+
+Stories persist through `/api/projects`. The authoring UI talks only to that HTTP API. Behind it is a `DbController` (SQLite today) with first-class tables for stories, characters, locations, scenes, and identity-sheet refs. Swap the database later by implementing `DbController` — Postgres can reuse the same routes and UI.
+
+```
+GET    /api/projects
+POST   /api/projects
+GET    /api/projects/:id
+PUT    /api/projects/:id
+DELETE /api/projects/:id
+```
+
+Default file: `data/storyteller.sqlite`. Generated example sheets are copied into `data/assets/` and served from `/library/{id}.png`, so they survive restarting the dev server. `STORYTELLER_STORE=memory` keeps stories in process memory. `STORYTELLER_SQLITE` overrides the SQLite path.
 
 The analysis and image steps are deliberately provider-free mocks for this milestone. They preserve the domain boundary needed for later local or remote AI providers without requiring API keys.
 
@@ -45,12 +57,20 @@ Image generation is organized by subject (`character`, `location`, `prop`, or `s
 
 `src/playback.ts` also defines the first playback boundary: a small ordered manifest containing only the title and selected scene media, separate from the richer authoring project.
 
-## Desktop Flux generation
+## Real character sheets (Flux worker)
 
-The Vite/browser app intentionally stays in mock-preview mode. The Electron desktop app uses the same worker boundary and defaults to mock mode; enable real local Flux.2 explicitly when launching it:
+The colored watercolor cards in the browser are placeholders. Real portraits come from the Python Flux worker, not from `npm run image-lab`.
 
-```sh
-STORYTELLER_FLUX_MODE=real npm run desktop
+On Windows with an NVIDIA GPU, set up the worker once:
+
+```powershell
+cd apps/image-lab/worker
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install torch --index-url https://download.pytorch.org/whl/cu124
+.\.venv\Scripts\python.exe -m pip install -r requirements-flux.txt
 ```
 
-The default model is `black-forest-labs/FLUX.2-klein-4B`. Override it with `STORYTELLER_FLUX_MODEL`, set `STORYTELLER_FLUX_OUTPUT_DIR` to choose where PNGs are saved, and use `STORYTELLER_FLUX_TIMEOUT_MS` to change the 15-minute generation timeout. Real inference can be very slow on CPU-only systems.
+Restart `npm run dev`. The header should change from **Mock images** to **Flux · your GPU**. Then use **Generate portrait** on a character. The first run downloads `black-forest-labs/FLUX.2-klein-4B` and writes PNGs into `generated-assets/`.
+
+`npm run desktop` uses the same worker. Force mock or real with `STORYTELLER_FLUX_MODE`. Override the model with `STORYTELLER_FLUX_MODEL`. Real inference needs about 13GB VRAM for Klein 4B.
