@@ -7,5 +7,10 @@
     "start": "tsx src/index.ts",
     "status": "python worker/flux_worker.py status"
   },
-  "dependencies": {"@storyteller/image-provider":"*"}
+  "dependencies": {
+    "@storyteller/image-provider": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "latest"
+  }
 }

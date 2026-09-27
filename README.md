@@ -11,24 +11,24 @@ Local-first MVP monorepo for turning a children's story into an editable illustr
 ## Run locally
 
 ```sh
-npm install
-npm run dev
+pnpm install
+pnpm run dev
 ```
 
 Then open the local URL printed by Vite. The production build and tests can be checked with:
 
 ```sh
-npm run build
-npm test
+pnpm run build
+pnpm test
 ```
 
-`npm run typecheck` runs the TypeScript compiler without emitting files.
+`pnpm run typecheck` runs the TypeScript compiler without emitting files.
 
-The desktop shell uses Electron and can be launched after installing dependencies with `npm run desktop`. It loads the same production build as the browser version and does not require Rust/Cargo.
+The desktop shell uses Electron and can be launched after installing dependencies with `pnpm run desktop`. It loads the same production build as the browser version and does not require Rust/Cargo.
 
 ## Image lab
 
-The repository is now an npm workspace. `packages/image-provider` defines the small provider-neutral image contract, with mock and ComfyUI seams. `apps/image-lab` is a deliberately tiny local test harness; run it with `npm run --workspace @storyteller/image-lab start`. Flux/ComfyUI integration should be added there, not mixed into story-domain code.
+The repository is a pnpm workspace. `packages/image-provider` defines the small provider-neutral image contract, with mock and ComfyUI seams. `apps/image-lab` is a deliberately tiny local test harness; run it with `pnpm --filter @storyteller/image-lab start` or `pnpm run image-lab`. Flux/ComfyUI integration should be added there, not mixed into story-domain code.
 
 ## Current vertical slice
 
@@ -59,7 +59,7 @@ Image generation is organized by subject (`character`, `location`, `prop`, or `s
 
 ## Real character sheets (Flux worker)
 
-The colored watercolor cards in the browser are placeholders. Real portraits come from the Python Flux worker, not from `npm run image-lab`.
+The colored watercolor cards in the browser are placeholders. Real portraits come from the Python Flux worker, not from `pnpm run image-lab`.
 
 On Windows with an NVIDIA GPU, set up the worker once:
 
@@ -71,9 +71,9 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-flux.txt
 ```
 
-Restart `npm run dev`. The header should change from **Mock images** to **Flux · your GPU**. Then use **Generate portrait** on a character. The first run downloads `black-forest-labs/FLUX.2-klein-4B` and writes PNGs into `generated-assets/`.
+Restart `pnpm run dev`. The header should change from **Mock images** to **Flux · your GPU**. Then use **Generate portrait** on a character. The first run downloads `black-forest-labs/FLUX.2-klein-4B` and writes PNGs into `generated-assets/`.
 
-`npm run desktop` uses the same worker. Force mock or real with `STORYTELLER_FLUX_MODE`. Override the model with `STORYTELLER_FLUX_MODEL`. Real inference needs about 13GB VRAM for Klein 4B.
+`pnpm run desktop` uses the same worker. Force mock or real with `STORYTELLER_FLUX_MODE`. Override the model with `STORYTELLER_FLUX_MODEL`. Real inference needs about 13GB VRAM for Klein 4B.
 
 ## Local stories (Ollama)
 
@@ -85,7 +85,7 @@ Ollama is already enough — there is no extra Python worker. Install a chat mod
 ollama pull llama3:instruct
 ```
 
-Restart `npm run dev`. The header should change from **Template stories** to **Ollama · model**. The first write after a model load can take a minute; later ones are usually a few seconds.
+Restart `pnpm run dev`. The header should change from **Template stories** to **Ollama · model**. The first write after a model load can take a minute; later ones are usually a few seconds.
 
 Defaults, in order: `qwen3.5:latest`, `llama3:instruct`, `llama3:latest`, then the first non-embedding model Ollama reports. Override with `STORYTELLER_LLM_MODEL`. Point at another host with `STORYTELLER_OLLAMA_URL`. Force the old templates with `STORYTELLER_STORY_MODE=template`, or require Ollama with `STORYTELLER_STORY_MODE=ollama`.
 

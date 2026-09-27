@@ -208,7 +208,7 @@ function App(){
       }):undefined;
       const result=await generateImages({mode:kind==='scene'?'composition':'asset',subject:kind,prompt,variants:1,width:768,height:768,assetId:id,references},controller.signal);
       const returned=result.images.map(image=>publicAssetRef(image.url||image.dataUrl||image.filePath)).filter((value):value is string=>Boolean(value));
-      if (!returned.length) throw new Error(result.mode==='mock'?'The image worker is still in mock mode. Install the Flux worker venv, then restart npm run dev.':'Flux finished without saving a PNG.');
+      if (!returned.length) throw new Error(result.mode==='mock'?'The image worker is still in mock mode. Install the Flux worker venv, then restart pnpm run dev.':'Flux finished without saving a PNG.');
       const nextImage={imageStatus:'generated' as const,imageVariants:returned,selectedImage:returned[0],imageFile:publicAssetRef(result.images[0]?.filePath)||returned[0]};
       const current=projectRef.current||latest;
       const next=normalizeProject({
