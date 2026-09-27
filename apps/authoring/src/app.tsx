@@ -7,15 +7,15 @@ import { PlacesTab } from './components/PlacesTab';
 import { ScenesTab } from './components/ScenesTab';
 import { StoryTab } from './components/StoryTab';
 import { Workspace } from './components/Workspace';
-import { analyzeStory, createId, normalizeProject, type Project, type Scene } from './domain';
-import { characterVisualPrompt, keyCharacters, locationVisualPrompt, missingKeyExamples, sceneReferenceCast, sceneVisualPrompt, type StoryAge, type StoryTone } from './generate';
+import { createId, normalizeProject, type Project, type Scene } from './domain';
+import { characterVisualPrompt, keyCharacters, locationVisualPrompt, missingKeyExamples, objectVisualPrompt, sceneReferenceCast, sceneVisualPrompt, type StoryAge, type StoryTone } from './generate';
 import { generateImages, getImageStatus, type ImageStatus } from './image-bridge';
-import { generateStoryDraft, getStoryStatus, type StoryStatus } from './story-bridge';
+import { analyzeStoryDraft, generateStoryDraft, getStoryStatus, type StoryStatus } from './story-bridge';
 import type { AssetKind, Tab } from './types';
 
 const CURRENT_KEY='storyteller.currentProjectId';
 const LEGACY_KEY='storyteller.project.v1';
-const exampleStory={title:'Milo and the Moonlit Forest',sourceText:'Milo, a curious little fox, lived beside the moonlit forest. One evening, Milo met Nora, a girl in a yellow raincoat, at the edge of the woods. Together they followed a trail of silver leaves to a quiet pond. A gentle bear named Bram was waiting there with a lantern. The three friends shared stories until the first birds began to sing.'};
+const exampleStory={title:'Milo and the Moonlit Forest',premise:'A curious fox named Milo and a girl in a yellow raincoat follow silver leaves to a pond.',sourceText:'Milo, a curious little fox, lived beside the moonlit forest. One evening, Milo met Nora, a girl in a yellow raincoat, at the edge of the woods. Together they followed a trail of silver leaves to a quiet pond. A gentle bear named Bram was waiting there with a lantern. The three friends shared stories until the first birds began to sing.'};
 const uid=createId;
 
 function workspaceTabs(project:Project){
@@ -151,19 +151,38 @@ export function App(){
   };
   const replaceDrafts=()=>{
     if (!project) return false;
-    const hasDrafts=project.characters.length>0||project.locations.length>0||project.scenes.length>0;
+    const hasDrafts=project.characters.length>0||project.locations.length>0||project.objects.length>0||project.scenes.length>0;
     return !hasDrafts||window.confirm('Replace the current story modules? Edited characters, places, and scenes will be overwritten.');
   };
   const runAnalysis=async()=>{
-    if(!project?.sourceText.trim()||analyzing||writing||!replaceDrafts()) return;
+    if(!project?.sourceText.trim()||writing) return;
+    if(analyzing){
+      writeAbort.current?.abort();
+      return;
+    }
+    if(!replaceDrafts()) return;
+    const controller=new AbortController();
+    writeAbort.current=controller;
     setAnalyzing(true);
-    await new Promise(resolve=>window.setTimeout(resolve,0));
     try {
-      const draft=analyzeStory((projectRef.current||project).sourceText);
-      patch(draft);
-      setTab(draft.scenes.length?'scenes':draft.characters.length?'characters':'story');
+      const draft=await analyzeStoryDraft((projectRef.current||project).sourceText,controller.signal);
+      if(controller.signal.aborted) return;
+      patch({
+        title:draft.title||(projectRef.current||project).title,
+        characters:draft.characters,
+        locations:draft.locations,
+        objects:draft.objects,
+        scenes:draft.scenes
+      });
+      setTab(draft.characters.length?'characters':draft.scenes.length?'scenes':'story');
+    } catch(error) {
+      if(error instanceof DOMException&&error.name==='AbortError') return;
+      window.alert(error instanceof Error?error.message:'Could not analyze the story.');
     } finally {
-      setAnalyzing(false);
+      if(writeAbort.current===controller){
+        writeAbort.current=undefined;
+        setAnalyzing(false);
+      }
     }
   };
   const runStoryGeneration=async(brief:{premise:string;tone:StoryTone;age:StoryAge;reuseCast:boolean;pageCount?:number;paragraphsMin?:number;paragraphsMax?:number;paragraphWordsMin?:number;paragraphWordsMax?:number})=>{
@@ -173,7 +192,7 @@ export function App(){
       return;
     }
     const latest=projectRef.current||project;
-    const keepCast=brief.reuseCast&&(latest.characters.length>0||latest.locations.length>0);
+    const keepCast=brief.reuseCast&&(latest.characters.length>0||latest.locations.length>0||latest.objects.length>0);
     if(!keepCast&&!replaceDrafts()) return;
     const controller=new AbortController();
     writeAbort.current=controller;
@@ -189,11 +208,12 @@ export function App(){
         paragraphWordsMin:brief.paragraphWordsMin,
         paragraphWordsMax:brief.paragraphWordsMax,
         characters:keepCast?latest.characters:undefined,
-        locations:keepCast?latest.locations:undefined
+        locations:keepCast?latest.locations:undefined,
+        objects:keepCast?latest.objects:undefined
       },controller.signal);
       if(controller.signal.aborted) return;
-      patch(generated);
-      setTab('story');
+      patch({...generated,premise:brief.premise});
+      setTab(generated.characters.length?'characters':'story');
     } catch(error) {
       if(error instanceof DOMException&&error.name==='AbortError') return;
       window.alert(error instanceof Error?error.message:'Could not write the story.');
@@ -215,8 +235,9 @@ export function App(){
     }
     const character=kind==='character'?latest.characters.find(item=>item.id===id):undefined;
     const location=kind==='location'?latest.locations.find(item=>item.id===id):undefined;
+    const storyObject=kind==='object'?latest.objects.find(item=>item.id===id):undefined;
     const scene=kind==='scene'?latest.scenes.find(item=>item.id===id):undefined;
-    const subject=character||location||scene;
+    const subject=character||location||storyObject||scene;
     if(!subject) return;
     if(kind==='scene'){
       const needed=keyCharacters(latest.characters).filter(item=>scene?.characterIds.includes(item.id));
@@ -230,12 +251,13 @@ export function App(){
     abortors.current[id]=controller;
     setGenerating(x=>({...x,[id]:true}));
     try {
-      const prompt=character?characterVisualPrompt(character):location?locationVisualPrompt(location):sceneVisualPrompt(scene as Scene,latest);
+      const prompt=character?characterVisualPrompt(character):location?locationVisualPrompt(location):storyObject?objectVisualPrompt(storyObject):sceneVisualPrompt(scene as Scene,latest);
       const references=kind==='scene'?sceneReferenceCast(scene as Scene,latest.characters).flatMap(item=>{
         const filePath=item.imageFile||(item.selectedImage&&!item.selectedImage.startsWith('data:')?item.selectedImage:undefined);
         return filePath?[{assetId:item.id,filePath,url:item.selectedImage,role:'identity' as const}]:[];
       }):undefined;
-      const result=await generateImages({mode:kind==='scene'?'composition':'asset',subject:kind,prompt,variants:1,width:768,height:768,assetId:id,references},controller.signal);
+      const imageSubject=kind==='object'?'prop':kind;
+      const result=await generateImages({mode:kind==='scene'?'composition':'asset',subject:imageSubject,prompt,variants:1,width:768,height:768,assetId:id,references},controller.signal);
       const returned=result.images.map(image=>publicAssetRef(image.url||image.dataUrl||image.filePath)).filter((value):value is string=>Boolean(value));
       if (!returned.length) throw new Error(result.mode==='mock'?'The image worker is still in mock mode. Install the Flux worker venv, then restart npm run dev.':'Flux finished without saving a PNG.');
       const nextImage={imageStatus:'generated' as const,imageVariants:returned,selectedImage:returned[0],imageFile:publicAssetRef(result.images[0]?.filePath)||returned[0]};
@@ -245,6 +267,7 @@ export function App(){
         updatedAt:new Date().toISOString(),
         characters:kind==='character'?current.characters.map(item=>item.id===id?{...item,...nextImage}:item):current.characters,
         locations:kind==='location'?current.locations.map(item=>item.id===id?{...item,...nextImage}:item):current.locations,
+        objects:kind==='object'?current.objects.map(item=>item.id===id?{...item,...nextImage}:item):current.objects,
         scenes:kind==='scene'?current.scenes.map(item=>item.id===id?{...item,...nextImage}:item):current.scenes
       });
       skipSave.current=true;
@@ -310,7 +333,7 @@ export function App(){
     <main>
       <Library stories={stories} selectedId={project.id} onNew={()=>{void newStory()}} onOpen={id=>{void openStory(id)}} onExport={exportProject} onImport={importProject} onDelete={()=>{void deleteStory()}}/>
       <Workspace title={project.title} tab={tab} tabs={tabs} onTab={setTab}>
-        {tab==='story'&&<StoryTab key={formKey} project={project} patch={patch} analyze={()=>{void runAnalysis()}} generate={runStoryGeneration} writing={writing} analyzing={analyzing} storyStatus={storyStatus} loadExample={()=>{patch({...exampleStory,characters:[],locations:[],scenes:[]});setTab('story')}}/>}
+        {tab==='story'&&<StoryTab key={formKey} project={project} patch={patch} analyze={()=>{void runAnalysis()}} generate={runStoryGeneration} writing={writing} analyzing={analyzing} storyStatus={storyStatus} loadExample={()=>{patch({...exampleStory,characters:[],locations:[],objects:[],scenes:[]});setFormKey(key=>key+1);setTab('story')}}/>}
         {tab==='characters'&&<CharactersTab project={project} patch={patch} generateAsset={generateAsset} generateKeyExamples={generateKeyExamples} generating={generating}/>}
         {tab==='places'&&<PlacesTab project={project} patch={patch} generateAsset={generateAsset} generating={generating}/>}
         {tab==='scenes'&&<ScenesTab project={project} patch={patch} generateAsset={generateAsset} generateKeyExamples={generateKeyExamples} generating={generating} imageStatus={imageStatus}/>}

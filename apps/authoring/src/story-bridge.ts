@@ -10,7 +10,7 @@ export type StoryStatus = {
   error?:string;
 };
 
-export type GeneratedStory = Pick<Project,'title'|'sourceText'|'characters'|'locations'|'scenes'> & {
+export type GeneratedStory = Pick<Project,'title'|'sourceText'|'characters'|'locations'|'objects'|'scenes'> & {
   mode:'ollama'|'template';
   model?:string;
 };
@@ -29,6 +29,13 @@ export async function generateStoryDraft(brief:StoryBrief,signal?:AbortSignal):P
   const response=await fetch('/api/generate-story',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(brief),signal});
   const payload=await response.json() as GeneratedStory & {error?:string};
   if (!response.ok) throw new Error(payload.error||'Story generation failed');
+  return payload;
+}
+
+export async function analyzeStoryDraft(sourceText:string,signal?:AbortSignal):Promise<GeneratedStory> {
+  const response=await fetch('/api/analyze-story',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sourceText}),signal});
+  const payload=await response.json() as GeneratedStory & {error?:string};
+  if (!response.ok) throw new Error(payload.error||'Story analysis failed');
   return payload;
 }
 

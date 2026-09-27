@@ -92,14 +92,14 @@ describe('sqlite db controller',()=>{
     expect((await db.listStories())[0]).toEqual(expect.objectContaining({id:saved.id,title:'Milo',characterCount:1,sceneCount:1}));
     const loaded=await db.getStory(saved.id);
     expect(loaded?.sourceText).toBe('A fox walked.');
-    expect(loaded?.characters[0].selectedImage).toBe('/library/milo.png');
-    expect(existsSync(path.join(dir,'assets','milo.png'))).toBe(true);
+    expect(loaded?.characters[0].selectedImage).toMatch(/^\/library\/milo-.+\.png$/);
+    expect(existsSync(path.join(dir,'assets',path.basename(loaded!.characters[0].selectedImage!)))).toBe(true);
     expect(loaded?.scenes[0].characterIds).toEqual(['milo']);
     await db.saveStory({...loaded!,title:'Milo and the Forest',characters:[{...loaded!.characters[0],imageStatus:'empty',selectedImage:undefined,imageFile:undefined,imageVariants:[]}]});
     const kept=await db.getStory(saved.id);
     expect(kept?.title).toBe('Milo and the Forest');
     expect(kept?.characters[0].imageStatus).toBe('generated');
-    expect(kept?.characters[0].selectedImage).toBe('/library/milo.png');
+    expect(kept?.characters[0].selectedImage).toBe(loaded?.characters[0].selectedImage);
     expect(await db.deleteStory(saved.id)).toBe(true);
     expect(await db.getStory(saved.id)).toBeUndefined();
   });

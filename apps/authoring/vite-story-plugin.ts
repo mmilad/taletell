@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Plugin } from 'vite';
-import { generateLocalStory, getStoryStatus } from './server/ollama-story.ts';
+import { generateLocalStory, analyzeLocalStory, getStoryStatus } from './server/ollama-story.ts';
 import type { StoryBrief } from './src/generate.ts';
 
 function readJson(req:IncomingMessage) {
@@ -40,6 +40,17 @@ export function storytellerStoryPlugin():Plugin {
               return;
             }
             const story=await generateLocalStory(brief);
+            writeJson(res,200,story);
+            return;
+          }
+          if (url==='/api/analyze-story'&&req.method==='POST') {
+            const body=await readJson(req);
+            const sourceText=typeof body.sourceText==='string'?body.sourceText:'';
+            if (!sourceText.trim()) {
+              writeJson(res,400,{error:'Story text is required to analyze a story.'});
+              return;
+            }
+            const story=await analyzeLocalStory(sourceText);
             writeJson(res,200,story);
             return;
           }

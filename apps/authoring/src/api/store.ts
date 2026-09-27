@@ -24,8 +24,10 @@ export function emptyProject(partial:Partial<Project>={}):Project {
     id:partial.id||createId(),
     title:partial.title||'Untitled story',
     sourceText:partial.sourceText||'',
+    premise:partial.premise||'',
     characters:partial.characters||[],
     locations:partial.locations||[],
+    objects:partial.objects||[],
     scenes:partial.scenes||[],
     updatedAt:partial.updatedAt||new Date().toISOString()
   });
@@ -65,6 +67,7 @@ export function mergeStory(existing:Project|undefined,incoming:Project):Project 
     ...next,
     characters:preserveModuleImages(next.characters,existing.characters),
     locations:preserveModuleImages(next.locations,existing.locations),
+    objects:preserveModuleImages(next.objects,existing.objects),
     scenes:preserveModuleImages(next.scenes,existing.scenes)
   });
 }
@@ -75,6 +78,7 @@ export function canonicalizeStory(project:Project):Project {
     ...next,
     characters:next.characters.map(canonicalizeImageable),
     locations:next.locations.map(canonicalizeImageable),
+    objects:next.objects.map(canonicalizeImageable),
     scenes:next.scenes.map(canonicalizeImageable)
   };
 }

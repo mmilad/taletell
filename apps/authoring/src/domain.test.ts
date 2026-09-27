@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeStory, createCharacter, createLocation, normalizeProject } from './domain';
-import { characterVisualPrompt, generateCharacter, generateScene, generateStory, missingKeyExamples, sceneVisualPrompt } from './generate';
+import { createCharacter, createLocation, normalizeProject } from './domain';
+import { analyzeStory, characterVisualPrompt, generateCharacter, generateScene, generateStory, missingKeyExamples, sanitizeStoryModules, sceneVisualPrompt } from './generate';
 import { extractJson, parseStoryDraft } from './story-draft';
 import { normalizeStoryShape, shapeSceneProse } from './story-shape';
 import { createPlaybackManifest } from './playback';
@@ -10,7 +10,7 @@ describe('draft analysis',()=>{
   it('extracts editable characters, locations, and scenes without provider data',()=>{
     const result=analyzeStory('Lina walked through the forest. Lina saw a fox.');
     expect(result.characters.map(c=>c.name)).toContain('Lina');
-    expect(result.locations[0].name).toBe('Forest');
+    expect(result.locations[0].name).toBe('Moonlit Forest');
     expect(result.scenes).toHaveLength(2);
     expect(result).not.toHaveProperty('provider');
   });
@@ -21,7 +21,42 @@ describe('draft analysis',()=>{
   it('does not treat place words as characters',()=>{
     const result=analyzeStory('Still, Pip kept a small wish. They walked to the Village. The Forest held its breath.');
     expect(result.characters.map(character=>character.name)).toEqual(['Pip']);
-    expect(result.locations.map(location=>location.name).sort()).toEqual(['Forest','Village']);
+    expect(result.locations.map(location=>location.name).sort()).toEqual(['Moonlit Forest','Lantern Village'].sort());
+  });
+  it('imagines visual drafts and skips sentence starters',()=>{
+    const result=analyzeStory('Lily loved to run with her golden retriever, Barnaby. Suddenly, the ball rolled into the bushes. She reached for it.');
+    expect(result.characters.map(character=>character.name)).toEqual(['Lily','Barnaby']);
+    const barnaby=result.characters.find(character=>character.name==='Barnaby');
+    const lily=result.characters.find(character=>character.name==='Lily');
+    expect(barnaby?.appearance.toLowerCase()).toMatch(/retriever|dog|golden/);
+    expect(lily?.appearance.toLowerCase()).toMatch(/girl|lily/);
+    expect(lily?.description).not.toMatch(/review this draft/i);
+    expect(result.objects.some(object=>/ball/i.test(object.name))).toBe(true);
+    expect(result.scenes.some(scene=>scene.visualDescription!=='Describe what should be visible in this moment.')).toBe(true);
+  });
+  it('audits out verbs, objects, and place compounds',()=>{
+    const result=analyzeStory('Lily loved to run with Barnaby. Flowers sang songs. "Eat one to see what lies ahead," she said. They followed the map to the Crystal Stream. Glimmer flew down from a flower. They walked into the Berry Patch.');
+    expect(result.characters.map(character=>character.name).sort()).toEqual(['Barnaby','Glimmer','Lily']);
+    expect(result.characters.map(character=>character.name)).not.toEqual(expect.arrayContaining(['Eat','Crystal','Flowers','Berry','Heart']));
+    expect(result.locations.map(location=>location.name)).toEqual(expect.arrayContaining(['Crystal Stream','Berry Patch']));
+    const glimmer=result.characters.find(character=>character.name==='Glimmer');
+    expect(glimmer?.appearance.toLowerCase()).toMatch(/fairy|wings/);
+    expect(glimmer?.appearance).not.toMatch(/Do not touch/i);
+  });
+  it('keeps Heart Cave as a place and the ball as a special object',()=>{
+    const result=analyzeStory('Lily loved to run with her golden retriever, Barnaby. They lost their red ball in the grass. Glimmer flew down from a flower. "It rests in the Heart Cave," said a voice. They reached the Heart Cave.');
+    expect(result.characters.map(character=>character.name).sort()).toEqual(['Barnaby','Glimmer','Lily']);
+    expect(result.characters.map(character=>character.name)).not.toContain('Heart');
+    expect(result.locations.map(location=>location.name)).toEqual(expect.arrayContaining(['Heart Cave']));
+    expect(result.objects.some(object=>/ball/i.test(object.name))).toBe(true);
+    expect(result.objects.some(object=>object.name==='Heart')).toBe(false);
+  });
+  it('lets the LLM keep names and only rewrites prose identities',()=>{
+    const lily=createCharacter({name:'Lily',role:'hero',description:'Lily ran. "Wait," she said. They reached the cave.',appearance:'Lily ran. "Wait," she said. They reached the cave.',traits:['kind'],key:true});
+    const cleaned=sanitizeStoryModules('Lily ran with Barnaby.',{characters:[lily],locations:[],objects:[],scenes:[]});
+    expect(cleaned.characters.map(character=>character.name)).toEqual(['Lily']);
+    expect(cleaned.characters[0].appearance).not.toMatch(/Wait/);
+    expect(cleaned.characters[0].appearance.toLowerCase()).toMatch(/lily|girl|storybook/);
   });
 });
 describe('playback boundary',()=>{it('exports only ordered presentation data',()=>{const result=createPlaybackManifest({id:'s',title:'Fox',sourceText:'secret authoring text',characters:[],locations:[],scenes:[{id:'b',order:1,sourceText:'x',summary:'x',visualDescription:'x',characterIds:[],imageStatus:'generated',selectedImage:'b.webp'},{id:'a',order:0,sourceText:'y',summary:'y',visualDescription:'y',characterIds:[],imageStatus:'empty'}],updatedAt:''});expect(result.scenes.map(s=>s.id)).toEqual(['a','b']);expect(result).not.toHaveProperty('sourceText');expect(result.scenes[1].image).toBe('b.webp')})});
@@ -51,6 +86,8 @@ describe('modular generation',()=>{
     expect(pip.key).toBe(true);
     expect(characterVisualPrompt(pip).toLowerCase()).toContain('isolated');
     expect(characterVisualPrompt(pip).toLowerCase()).toContain('one character');
+    expect(characterVisualPrompt(pip).toLowerCase()).toContain('must match this visual identity exactly');
+    expect(characterVisualPrompt(pip).toLowerCase()).toContain('blue scarf');
     expect(characterVisualPrompt(pip).toLowerCase()).not.toContain('silhouette');
   });
   it('marks the first two story characters as the key cast',()=>{
@@ -148,6 +185,7 @@ describe('story shape',()=>{
   it('writes the requested number of pages',()=>{
     const story=generateStory({premise:'a shy rabbit named Pip who wants to sing at the village fair',pageCount:4});
     expect(story.scenes).toHaveLength(4);
+    expect(story.premise).toContain('shy rabbit');
   });
   it('keeps scene paragraphs inside the requested bounds',()=>{
     const story=generateStory({

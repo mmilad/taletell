@@ -1,4 +1,4 @@
-import { createCharacter, createLocation, createScene, type Character, type Location, type Project, type Scene } from './domain';
+import { createCharacter, createLocation, createObject, createScene, type Character, type Location, type Project, type Scene, type StoryObject } from './domain';
 import { fitPages, normalizeStoryShape, shapeSceneProse, type StoryShapeInput } from './story-shape';
 
 export type StoryTone = 'gentle'|'adventurous'|'funny';
@@ -9,9 +9,31 @@ export type StoryBrief = StoryShapeInput & {
   age?:StoryAge;
   characters?:Character[];
   locations?:Location[];
+  objects?:StoryObject[];
 };
 
 const NAME_STOP = new Set(['The','Once','When','Then','And','But','There','One','Together','A','An','In','At','This','That','They','With','From','After','Before','Into','Still','Quiet','Village','Forest','Fair','Evening','Moonlit','Lantern','Story','Small','Wonder','Home','Place']);
+const ANALYZE_NAME_STOP = new Set([
+  ...NAME_STOP,
+  'He','She','Him','Her','His','Its','Our','Your','You','We','Them','Their','Who','What','Where','Why','How',
+  'Suddenly','Now','Soon','Later','Finally','Meanwhile','Hello','Goodbye','Please','Thank','Thanks','Yes','No','Oh','Ah','Wow',
+  'Maybe','Perhaps','Instead','However','Because','Although','While','During','Without','Within','Toward','Through','Across',
+  'Along','Around','Behind','Beyond','Inside','Outside','Above','Below','Again','Here','Well','Even','Also','Just','Only',
+  'Back','Over','Under','Until','After','Before','Today','Tonight','Tomorrow','Yesterday','Remember','Watch','Look','Wait',
+  'Come','Came','Went','Said','Ask','Asked','Eat','Look','Wait','All','Each','Every','Both','Many','More','Most','Other','Some','Such','Same',
+  'Very','Too','Can','Will','Not','For','Last','Page','Walk','Next','Wish','Nothing','Something','Someone','Everyone',
+  'Flowers','Flower','Berry','Berries','Crystal','Stream','Patch','Map','Path','Ball','Light','Bush','Bushes','Song','Songs',
+  'Sky','Wind','Grass','Fruit','Fruits','Clue','Clues','Voice','Shadow','World','Tune','Music'
+]);
+const PLACE_FOLLOWERS = ['Stream','Patch','Forest','Meadow','River','Garden','Path','Grove','Tree','Hollow','Kitchen','World','Fair','Village','Bush','Bushes','Cave','Hill','Pond','Shore','House','Room','Gate','Bridge','Trail','Mountain','Castle','School','Bakery','Library','Backyard','Woods'];
+const BEING_VERBS = 'said|asked|flew|looked|wagged|barked|ran|walked|loved|reached|pointed|shone|warned|jumped|laughed|whispered|nodded|smiled|sat|stood|played|chased|caught|threw|hugged|thanked|waved|called|giggled|trotted|licked|sang|helped|followed|found|hid|waited|listened|met|kept|has|had|is|was';
+const OBJECT_CATALOG = [
+  {word:'ball',name:'Red Ball',appearance:'a round red storybook ball, smooth and easy to hold'},
+  {word:'lantern',name:'Lantern',appearance:'a small warm storybook lantern with a glowing pane'},
+  {word:'map',name:'Map',appearance:'a folded picture-map with simple marks'},
+  {word:'crystal',name:'Crystal',appearance:'a smooth glowing storybook crystal, pale blue-white'},
+  {word:'crystals',name:'Crystals',appearance:'a small cluster of smooth glowing storybook crystals'}
+];
 const SPECIES = [
   {word:'fox',name:'Milo',appearance:'a small rusty-orange fox with bright curious eyes and a white chest',role:'curious explorer'},
   {word:'raccoon',name:'Ash',appearance:'a small cocoa raccoon in a patched scarf, pockets full of useful buttons',role:'mischief helper'},
@@ -21,6 +43,8 @@ const SPECIES = [
   {word:'mouse',name:'Nim',appearance:'a cocoa-brown mouse in a leaf-green vest, whiskers always twitching',role:'clever friend'},
   {word:'cat',name:'Mira',appearance:'a mist-gray cat with white socks and a calm, moonlit gaze',role:'quiet watcher'},
   {word:'dog',name:'Tomo',appearance:'a warm tan puppy with floppy ears and a red bandanna',role:'loyal companion'},
+  {word:'retriever',name:'Barnaby',appearance:'a golden retriever with sunny fur, bright eyes, and a wagging plume of a tail',role:'loyal companion'},
+  {word:'puppy',name:'Tomo',appearance:'a warm tan puppy with floppy ears and a red bandanna',role:'loyal companion'},
   {word:'sparrow',name:'Lila',appearance:'a small sunflower-yellow sparrow with a coral scarf and bright wings',role:'cheering friend'},
   {word:'bird',name:'Lila',appearance:'a small sunflower-yellow bird with a coral scarf and bright wings',role:'cheering friend'},
   {word:'deer',name:'Sable',appearance:'a slender fawn with star-speckled fur and careful hooves',role:'gentle traveler'},
@@ -47,7 +71,9 @@ const PLACES = [
   {word:'fair',name:'Village Fair',description:'Bunting, lanterns, a tiny stage, and the smell of warm jam.'},
   {word:'beach',name:'Shell Beach',description:'Pale sand, curious shells, and a tide that leaves messages.'},
   {word:'treehouse',name:'Leafy Treehouse',description:'A wooden room in the branches with a rope ladder and a lookout.'},
-  {word:'house',name:'Cozy Burrow',description:'A snug home with a round door, quilted chairs, and a kettle always almost ready.'}
+  {word:'house',name:'Cozy Burrow',description:'A snug home with a round door, quilted chairs, and a kettle always almost ready.'},
+  {word:'backyard',name:'Green Backyard',description:'A grassy backyard with a wooden fence, a red ball, and room to run.'},
+  {word:'bushes',name:'Tall Bushes',description:'Thick leafy bushes that hide paths and lost toys.'}
 ];
 const COMPANIONS = [
   {name:'Nora',species:'child',appearance:'a kind girl in a yellow raincoat with rain-speckled boots',role:'brave friend',traits:['kind','brave']},
@@ -106,7 +132,7 @@ function findPlaces(text:string) {
 
 function appearanceFromPrompt(prompt:string,fallback:string) {
   const cleaned=sentence(prompt);
-  return cleaned.length>12?cleaned:fallback;
+  return looksLikeProse(cleaned)?fallback:cleaned.length>12?cleaned:fallback;
 }
 
 function extractWant(premise:string) {
@@ -148,6 +174,201 @@ export function generateLocation(prompt:string):Location {
     name,
     description:known?.description||`A children's-story place: ${sentence(text)}.`
   });
+}
+
+export function generateObject(prompt:string):StoryObject {
+  const text=prompt.trim();
+  const known=OBJECT_CATALOG.find(item=>new RegExp(`\\b${item.word}\\b`,'i').test(text));
+  const name=known?.name||titled(text.replace(/^(a|an|the)\s+/i,'').replace(/[^A-Za-z0-9 ]/g,' ').trim().split(/\s+/).slice(0,3).join(' '))||'Special Object';
+  const appearance=known?.appearance||(looksLikeProse(text)?`a special children's-story object called ${name}, simple and easy to recognize`:sentence(text));
+  return createObject({
+    name,
+    appearance,
+    description:`${name} is a special object in the story.`
+  });
+}
+
+function looksLikeProse(value:string) {
+  const text=value.trim();
+  if (!text) return true;
+  if (/["“]/.test(text)) return true;
+  if ((text.match(/[.!?]/g)||[]).length>=2) return true;
+  return text.split(/\s+/).length>22;
+}
+
+function placeCompoundName(name:string,text:string) {
+  const match=text.match(new RegExp(`\\b${name}\\s+(${PLACE_FOLLOWERS.join('|')})\\b`));
+  return match?match[0]:undefined;
+}
+
+function isPlaceCompound(name:string,text:string) {
+  return Boolean(placeCompoundName(name,text));
+}
+
+const BEING_KINDS = 'girl|boy|child|man|woman|dog|puppy|retriever|fox|rabbit|cat|owl|bear|mouse|bird|fairy|creature|friend|animal';
+
+function hasBeingEvidence(name:string,text:string) {
+  if (new RegExp(`\\b(?:named|called|met|found|saw)\\s+${name}\\b`).test(text)) return true;
+  if (new RegExp(`\\b${name}\\s+(?:the\\s+)?(?:${BEING_VERBS})\\b`,'i').test(text)) return true;
+  if (new RegExp(`\\b(?:a|an|the)\\s+(?:${BEING_KINDS})\\s+(?:named\\s+)?${name}\\b`,'i').test(text)) return true;
+  if (new RegExp(`\\b${name},\\s+(?:a|an)\\s+(?:${BEING_KINDS})\\b`,'i').test(text)) return true;
+  if (new RegExp(`\\b(?:${BEING_KINDS})\\b[^.!?]{0,48}\\b${name}\\b`,'i').test(text)) return true;
+  if (new RegExp(`\\b${name}\\b[^.!?]{0,48}\\b(?:${BEING_KINDS})\\b`,'i').test(text)) return true;
+  return false;
+}
+
+export function classifyStoryName(name:string,text:string):'character'|'place'|'object'|'drop' {
+  if (!name||ANALYZE_NAME_STOP.has(name)||isPlaceName(name)) return 'drop';
+  if (placeCompoundName(name,text)) return 'place';
+  if (hasBeingEvidence(name,text)) return 'character';
+  if (new RegExp(`["“']${name}\\b`).test(text)) return 'drop';
+  if (new RegExp(`\\b(?:and|with)\\s+${name}\\b`).test(text)) return 'character';
+  return 'drop';
+}
+
+export function isAuditedCharacter(name:string,text:string) {
+  return classifyStoryName(name,text)==='character';
+}
+
+function findNamedPlaces(text:string) {
+  const prefixStop=new Set(['The','A','An','This','That','They','His','Her','Our','Your','Its','Their']);
+  const found=new Map<string,{name:string;description:string}>();
+  const re=new RegExp(`\\b([A-Z][a-z]{2,})\\s+(${PLACE_FOLLOWERS.join('|')})\\b`,'g');
+  for (const match of text.matchAll(re)) {
+    const name=match[0];
+    if (prefixStop.has(match[1])) continue;
+    if (!found.has(name.toLowerCase())) found.set(name.toLowerCase(),{name,description:`A children's-story place called ${name}.`});
+  }
+  return [...found.values()];
+}
+
+function extractPlotObjects(text:string,existing:StoryObject[]=[]) {
+  const objects=[...existing];
+  const lower=text.toLowerCase();
+  for (const item of OBJECT_CATALOG) {
+    if (!new RegExp(`\\b${item.word}\\b`,'i').test(lower)) continue;
+    if (item.word==='crystal'||item.word==='crystals') {
+      if (/\bcrystal\s+stream\b/i.test(text)) continue;
+    }
+    if (objects.some(object=>object.name.toLowerCase()===item.name.toLowerCase()||object.name.toLowerCase().includes(item.word))) continue;
+    objects.push(createObject({name:item.name,appearance:item.appearance,description:`${item.name} is a special object in the story.`}));
+  }
+  return objects.slice(0,6);
+}
+
+export function auditStoryModules(text:string,modules:Pick<Project,'characters'|'locations'|'objects'|'scenes'>):Pick<Project,'characters'|'locations'|'objects'|'scenes'> {
+  const source=text.trim();
+  const characters=modules.characters.filter(character=>isAuditedCharacter(character.name,source)).slice(0,5).map((character,index)=>{
+    const around=mentionsOf(character.name,source);
+    const appearance=looksLikeProse(character.appearance)?imagineAppearance(character.name,around||source.slice(0,220)):character.appearance;
+    return {
+      ...character,
+      appearance,
+      description:looksLikeProse(character.description)?`${character.name} is ${appearance}.`:character.description,
+      key:character.key??index<2,
+      traits:(character.traits||[]).filter(trait=>trait!=='key')
+    };
+  });
+  const locations=modules.locations.slice();
+  for (const extra of modules.characters.filter(character=>classifyStoryName(character.name,source)==='place')) {
+    const name=placeCompoundName(extra.name,source)||extra.name;
+    if (locations.some(location=>location.name.toLowerCase()===name.toLowerCase()||location.name.toLowerCase().includes(extra.name.toLowerCase()))) continue;
+    locations.push(createLocation({name,description:`A recurring place called ${name}.`}));
+  }
+  for (const place of findNamedPlaces(source)) {
+    if (locations.some(location=>location.name.toLowerCase()===place.name.toLowerCase())) continue;
+    locations.push(createLocation(place));
+  }
+  const objects=extractPlotObjects(source,modules.objects||[]);
+  const ids=new Set(characters.map(character=>character.id));
+  const objectIds=new Set(objects.map(object=>object.id));
+  const scenes=modules.scenes.map(scene=>{
+    const mentionedObjects=objects.filter(object=>scene.sourceText.toLowerCase().includes(object.name.toLowerCase())||OBJECT_CATALOG.some(item=>object.name.toLowerCase().includes(item.word)&&new RegExp(`\\b${item.word}\\b`,'i').test(scene.sourceText)));
+    return {
+      ...scene,
+      characterIds:scene.characterIds.filter(id=>ids.has(id)),
+      objectIds:[...new Set([...(scene.objectIds||[]).filter(id=>objectIds.has(id)),...mentionedObjects.map(object=>object.id)])]
+    };
+  });
+  return {characters,locations,objects,scenes};
+}
+
+export function sanitizeStoryModules(text:string,modules:Pick<Project,'characters'|'locations'|'objects'|'scenes'>):Pick<Project,'characters'|'locations'|'objects'|'scenes'> {
+  const source=text.trim();
+  const characters=modules.characters.map((character,index)=>{
+    const around=mentionsOf(character.name,source);
+    const appearance=looksLikeProse(character.appearance)?imagineAppearance(character.name,around||source.slice(0,220)):character.appearance;
+    return {
+      ...character,
+      appearance,
+      description:looksLikeProse(character.description)?`${character.name} is ${appearance}.`:character.description,
+      key:character.key??index<2
+    };
+  });
+  const objects=(modules.objects||[]).map(object=>({
+    ...object,
+    appearance:looksLikeProse(object.appearance)?`a special storybook object called ${object.name}, simple and easy to recognize`:object.appearance,
+    description:looksLikeProse(object.description)?`${object.name} is a special object in the story.`:object.description
+  }));
+  return {...modules,characters,objects};
+}
+
+function mentionsOf(name:string,text:string) {
+  return text.split(/(?<=[.!?])\s+/).filter(part=>part.includes(name)).slice(0,4).join(' ');
+}
+
+function imagineAppearance(name:string,around:string) {
+  const lower=`${around} ${name}`.toLowerCase();
+  const species=(findAllSpecies(around).find(item=>{
+    const next=new RegExp(`${item.word}(?:,)?\\s+(?:named\\s+)?${name}\\b`,'i');
+    const prev=new RegExp(`${name}\\s+(?:the\\s+)?(?:[a-z]+\\s+){0,3}${item.word}`,'i');
+    return next.test(around)||prev.test(around);
+  })||undefined);
+  if (species) return species.appearance;
+  if (/\bfairy\b|\bflew\b|\bwings\b|\bglow/.test(lower)) return `a tiny storybook fairy named ${name}, shimmering wings, a distinct outfit, easy to recognize`;
+  if (/\bgirl\b|\bdaughter\b/.test(lower)||new RegExp(`\\b${name}\\b[^.!?]{0,40}\\bher\\b`,'i').test(around)) {
+    return `a little girl named ${name}, storybook clothes, kind face, easy to recognize in every scene`;
+  }
+  if (/\bboy\b|\bson\b/.test(lower)||new RegExp(`\\b${name}\\b[^.!?]{0,40}\\bhis\\b`,'i').test(around)) {
+    return `a little boy named ${name}, storybook clothes, kind face, easy to recognize in every scene`;
+  }
+  return `a children's storybook character named ${name}, distinct colors and clothes, kind face, easy to recognize`;
+}
+
+export function analyzeStory(text:string):Pick<Project,'characters'|'locations'|'objects'|'scenes'> {
+  const source=text.trim();
+  const names=[...new Set((source.match(/\b[A-Z][a-z]{2,}\b/g)||[]).filter(name=>isAuditedCharacter(name,source)))].slice(0,8);
+  const characters=names.map((name,index)=>{
+    const around=mentionsOf(name,source);
+    const appearance=imagineAppearance(name,around||source.slice(0,220));
+    const role=index===0?'hero':index===1?'friend':'story friend';
+    return createCharacter({
+      name,
+      role,
+      appearance,
+      description:`${name} is ${appearance}.`,
+      traits:index<2?['curious']:['kind'],
+      key:index<2
+    });
+  });
+  const catalogPlaces=findPlaces(source).slice(0,6).map(place=>createLocation({name:place.name,description:place.description}));
+  const namedPlaces=findNamedPlaces(source).map(place=>createLocation(place));
+  const locations=[...catalogPlaces];
+  for (const place of namedPlaces) {
+    if (!locations.some(location=>location.name.toLowerCase()===place.name.toLowerCase())) locations.push(place);
+  }
+  const objects=extractPlotObjects(source);
+  const paragraphs=source.split(/\n{2,}/).map(part=>part.replace(/\s+/g,' ').trim()).filter(Boolean);
+  const chunks=(paragraphs.length>1?paragraphs:source.split(/(?<=[.!?])\s+/).filter(Boolean)).slice(0,16);
+  const scenes=chunks.map((sourceText,order)=>{
+    const who=characters.filter(character=>sourceText.includes(character.name));
+    const what=objects.filter(object=>sourceText.toLowerCase().includes(object.name.toLowerCase())||OBJECT_CATALOG.some(item=>object.name.toLowerCase().includes(item.word)&&new RegExp(`\\b${item.word}\\b`,'i').test(sourceText)));
+    const where=locations.find(location=>sourceText.toLowerCase().includes(location.name.toLowerCase())||sourceText.toLowerCase().includes(location.name.split(' ').pop()||''));
+    const summary=sourceText.slice(0,100);
+    const visual=`Children's storybook scene: ${summary} ${who.map(character=>character.appearance).join('; ')}${what.length?`. Objects: ${what.map(object=>object.appearance).join('; ')}`:''}${where?`. Place: ${where.name}. ${where.description}`:''}`;
+    return createScene({order,sourceText,summary,visualDescription:visual,characterIds:who.map(character=>character.id),objectIds:what.map(object=>object.id),locationId:where?.id});
+  });
+  return auditStoryModules(source,{characters,locations,objects,scenes});
 }
 
 function remember(character:Character,taken:Set<string>,usedSpecies:Set<string>) {
@@ -466,18 +687,26 @@ export function generateScene(input:{beat:string;order:number;characters:Charact
   });
 }
 
-export function generateStory(brief:StoryBrief):Pick<Project,'title'|'sourceText'|'characters'|'locations'|'scenes'> {
+export function generateStory(brief:StoryBrief):Pick<Project,'title'|'sourceText'|'premise'|'characters'|'locations'|'objects'|'scenes'> {
   const premise=brief.premise.trim();
   if (!premise) throw new Error('A premise is required to generate a story.');
   const characters=buildCast(brief);
   const locations=buildPlaces(brief,characters[0]);
   const beats=writeArc({...brief,premise},characters,locations);
-  const scenes=beats.map((beat,order)=>createScene({...beat,order}));
+  const drafted=beats.map((beat,order)=>createScene({...beat,order}));
+  const sourceText=drafted.map(scene=>scene.sourceText).join('\n\n');
+  const objects=extractPlotObjects(`${premise}\n${sourceText}`,brief.objects||[]);
+  const scenes=drafted.map(scene=>({
+    ...scene,
+    objectIds:objects.filter(object=>scene.sourceText.toLowerCase().includes(object.name.toLowerCase())||OBJECT_CATALOG.some(item=>object.name.toLowerCase().includes(item.word)&&new RegExp(`\\b${item.word}\\b`,'i').test(scene.sourceText))).map(object=>object.id)
+  }));
   return {
     title:titleFrom(characters[0],locations,premise),
-    sourceText:scenes.map(scene=>scene.sourceText).join('\n\n'),
+    sourceText,
+    premise,
     characters,
     locations,
+    objects,
     scenes
   };
 }
@@ -488,15 +717,22 @@ export function sceneReferenceCast(scene:Scene,characters:Character[]) {
   return locked.length?locked:keyCharacters(inScene);
 }
 export function characterVisualPrompt(character:Character) {
-  return `One isolated children's storybook character example of ${character.name} only. ${character.appearance}. Full body, standing, facing the viewer, only this one character, no other animals. Pale cream background, no room, no landscape, no extra people. Soft picture-book illustration.`;
+  const identity=character.appearance.trim()||`${character.name} from the story`;
+  return `Must match this visual identity exactly: ${identity}. One isolated children's storybook character example of ${character.name} only: ${identity}. Same species, coat, clothes, and accessory colors as written — do not swap a different breed, scarf, or bandanna color. Full body, standing, facing the viewer, only this one character, no other animals. Pale cream background, no room, no landscape, no extra people. Soft picture-book illustration.`;
+}
+export function objectVisualPrompt(object:StoryObject) {
+  const identity=object.appearance.trim()||object.description||object.name;
+  return `Must match this visual identity exactly: ${identity}. One isolated children's storybook object: ${object.name}. ${identity}. No characters, no hands holding it unless the identity says so. Pale cream background, product-sheet view, soft picture-book illustration.`;
 }
 export function locationVisualPrompt(location:Location) {
   return `Reusable children's storybook location example of ${location.name}, wide establishing view, empty of main characters. ${location.description}`;
 }
-export function sceneVisualPrompt(scene:Scene,project:Pick<Project,'characters'|'locations'>) {
+export function sceneVisualPrompt(scene:Scene,project:Pick<Project,'characters'|'locations'|'objects'>) {
   const who=sceneReferenceCast(scene,project.characters);
   const where=project.locations.find(location=>location.id===scene.locationId);
+  const props=(project.objects||[]).filter(object=>(scene.objectIds||[]).includes(object.id));
   const labeled=who.map((character,index)=>`Reference ${index+1} is only ${character.name}: ${character.appearance}`).join('. ');
   const names=who.map(character=>character.name).join(' and ')||'the known characters';
-  return `Children's storybook scene using the attached character examples as identity locks. ${labeled}. Keep ${names} as those exact characters: same species, clothes, colors, and face. Do not swap who is who. Do not invent new main characters. Action: ${scene.summary}.${where?` Place: ${where.name}.`:''}`;
+  const objectLine=props.length?` Special objects in this moment: ${props.map(object=>`${object.name} (${object.appearance})`).join('; ')}.`:'';
+  return `Children's storybook scene using the attached character examples as identity locks. ${labeled}. Keep ${names} as those exact characters: same species, clothes, colors, and face. Do not swap who is who. Do not invent new main characters.${objectLine} Action: ${scene.summary}.${where?` Place: ${where.name}.`:''}`;
 }

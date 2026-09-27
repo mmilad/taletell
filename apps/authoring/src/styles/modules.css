@@ -33,6 +33,7 @@
   flex: none;
 }
 .avatar.place { background: #dfe6d9; color: #697d5e; }
+.avatar.object { background: #e8ddd0; color: #7a5c3a; border-radius: 8px; }
 .entity-body { min-width: 0; flex: 1; }
 .entity-body input, .entity-body textarea {
   display: block;
@@ -55,6 +56,13 @@
   padding: 4px 5px;
 }
 .entity-body small { font: 10px "DM Mono"; color: #a19c91; padding: 0 5px; }
+.entity-body .field-label {
+  display: block;
+  font: 10px "DM Mono";
+  letter-spacing: 0.08em;
+  color: #9a958a;
+  padding: 8px 5px 0;
+}
 .entity-body .appearance { color: #6f6a60; font-style: italic; }
 .entity-body .ghost { margin-top: 8px; }
 .remove { background: none; color: #aaa59c; font-size: 20px; }

@@ -1,11 +1,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { normalizeProject, type Character, type Imageable, type Location, type Project, type Scene } from '../src/domain.ts';
+import { normalizeProject, type Character, type Imageable, type Location, type Project, type Scene, type StoryObject } from '../src/domain.ts';
 import { mergeStory, type DbController, type StorySummary } from '../src/api/store.ts';
 import { assetDirFor, importAsset, resolveAssetFile, scratchDir } from './paths.ts';
 
-type StoryRow = { id:string; title:string; source_text:string; updated_at:string };
+type StoryRow = { id:string; title:string; source_text:string; premise:string; updated_at:string };
 type CharacterRow = {
   id:string; story_id:string; name:string; role:string; description:string; appearance:string;
   traits_json:string; is_key:number; sort_order:number; image_status:string;
@@ -15,9 +15,13 @@ type LocationRow = {
   id:string; story_id:string; name:string; description:string; sort_order:number; image_status:string;
   selected_image:string|null; image_file:string|null; image_variants_json:string;
 };
+type ObjectRow = {
+  id:string; story_id:string; name:string; description:string; appearance:string; sort_order:number; image_status:string;
+  selected_image:string|null; image_file:string|null; image_variants_json:string;
+};
 type SceneRow = {
   id:string; story_id:string; sort_order:number; source_text:string; summary:string; visual_description:string;
-  location_id:string|null; image_status:string; selected_image:string|null; image_file:string|null; image_variants_json:string;
+  location_id:string|null; object_ids_json:string; image_status:string; selected_image:string|null; image_file:string|null; image_variants_json:string;
 };
 
 const SCHEMA = `
@@ -25,6 +29,7 @@ const SCHEMA = `
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
     source_text TEXT NOT NULL DEFAULT '',
+    premise TEXT NOT NULL DEFAULT '',
     updated_at TEXT NOT NULL
   );
   CREATE TABLE IF NOT EXISTS characters (
@@ -55,6 +60,19 @@ const SCHEMA = `
     image_variants_json TEXT NOT NULL DEFAULT '[]',
     FOREIGN KEY (story_id) REFERENCES stories(id) ON DELETE CASCADE
   );
+  CREATE TABLE IF NOT EXISTS objects (
+    id TEXT PRIMARY KEY,
+    story_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    appearance TEXT NOT NULL DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    image_status TEXT NOT NULL DEFAULT 'empty',
+    selected_image TEXT,
+    image_file TEXT,
+    image_variants_json TEXT NOT NULL DEFAULT '[]',
+    FOREIGN KEY (story_id) REFERENCES stories(id) ON DELETE CASCADE
+  );
   CREATE TABLE IF NOT EXISTS scenes (
     id TEXT PRIMARY KEY,
     story_id TEXT NOT NULL,
@@ -63,6 +81,7 @@ const SCHEMA = `
     summary TEXT NOT NULL DEFAULT '',
     visual_description TEXT NOT NULL DEFAULT '',
     location_id TEXT,
+    object_ids_json TEXT NOT NULL DEFAULT '[]',
     image_status TEXT NOT NULL DEFAULT 'empty',
     selected_image TEXT,
     image_file TEXT,
@@ -80,6 +99,7 @@ const SCHEMA = `
   CREATE INDEX IF NOT EXISTS stories_updated_at ON stories(updated_at);
   CREATE INDEX IF NOT EXISTS characters_story_id ON characters(story_id);
   CREATE INDEX IF NOT EXISTS locations_story_id ON locations(story_id);
+  CREATE INDEX IF NOT EXISTS objects_story_id ON objects(story_id);
   CREATE INDEX IF NOT EXISTS scenes_story_id ON scenes(story_id);
 `;
 
@@ -116,6 +136,7 @@ export function createSqliteStore(filePath:string):DbController {
   database.exec('PRAGMA journal_mode = WAL;');
   database.exec('PRAGMA foreign_keys = ON;');
   database.exec(SCHEMA);
+  ensureStoryColumns(database);
   migrateJsonProjects(database);
 
   const listStmt=database.prepare(`
@@ -125,15 +146,16 @@ export function createSqliteStore(filePath:string):DbController {
     FROM stories s
     ORDER BY s.updated_at DESC
   `);
-  const storyStmt=database.prepare('SELECT id, title, source_text, updated_at FROM stories WHERE id = ?');
+  const storyStmt=database.prepare('SELECT id, title, source_text, premise, updated_at FROM stories WHERE id = ?');
   const charactersStmt=database.prepare('SELECT * FROM characters WHERE story_id = ? ORDER BY sort_order, name');
   const locationsStmt=database.prepare('SELECT * FROM locations WHERE story_id = ? ORDER BY sort_order, name');
+  const objectsStmt=database.prepare('SELECT * FROM objects WHERE story_id = ? ORDER BY sort_order, name');
   const scenesStmt=database.prepare('SELECT * FROM scenes WHERE story_id = ? ORDER BY sort_order');
   const sceneCharsStmt=database.prepare('SELECT character_id FROM scene_characters WHERE scene_id = ? ORDER BY sort_order');
 
   const upsertStory=database.prepare(`
-    INSERT INTO stories (id, title, source_text, updated_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET title = excluded.title, source_text = excluded.source_text, updated_at = excluded.updated_at
+    INSERT INTO stories (id, title, source_text, premise, updated_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET title = excluded.title, source_text = excluded.source_text, premise = excluded.premise, updated_at = excluded.updated_at
   `);
   const upsertCharacter=database.prepare(`
     INSERT INTO characters (id, story_id, name, role, description, appearance, traits_json, is_key, sort_order, image_status, selected_image, image_file, image_variants_json)
@@ -152,21 +174,31 @@ export function createSqliteStore(filePath:string):DbController {
       image_status = excluded.image_status, selected_image = excluded.selected_image, image_file = excluded.image_file,
       image_variants_json = excluded.image_variants_json
   `);
+  const upsertObject=database.prepare(`
+    INSERT INTO objects (id, story_id, name, description, appearance, sort_order, image_status, selected_image, image_file, image_variants_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      story_id = excluded.story_id, name = excluded.name, description = excluded.description, appearance = excluded.appearance, sort_order = excluded.sort_order,
+      image_status = excluded.image_status, selected_image = excluded.selected_image, image_file = excluded.image_file,
+      image_variants_json = excluded.image_variants_json
+  `);
   const upsertScene=database.prepare(`
-    INSERT INTO scenes (id, story_id, sort_order, source_text, summary, visual_description, location_id, image_status, selected_image, image_file, image_variants_json)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO scenes (id, story_id, sort_order, source_text, summary, visual_description, location_id, object_ids_json, image_status, selected_image, image_file, image_variants_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       story_id = excluded.story_id, sort_order = excluded.sort_order, source_text = excluded.source_text, summary = excluded.summary,
-      visual_description = excluded.visual_description, location_id = excluded.location_id, image_status = excluded.image_status,
+      visual_description = excluded.visual_description, location_id = excluded.location_id, object_ids_json = excluded.object_ids_json, image_status = excluded.image_status,
       selected_image = excluded.selected_image, image_file = excluded.image_file, image_variants_json = excluded.image_variants_json
   `);
   const insertSceneCharacter=database.prepare('INSERT INTO scene_characters (scene_id, character_id, sort_order) VALUES (?, ?, ?)');
   const deleteSceneCharacters=database.prepare('DELETE FROM scene_characters WHERE scene_id IN (SELECT id FROM scenes WHERE story_id = ?)');
   const deleteMissingCharacters=database.prepare('DELETE FROM characters WHERE story_id = ? AND id NOT IN (SELECT value FROM json_each(?))');
   const deleteMissingLocations=database.prepare('DELETE FROM locations WHERE story_id = ? AND id NOT IN (SELECT value FROM json_each(?))');
+  const deleteMissingObjects=database.prepare('DELETE FROM objects WHERE story_id = ? AND id NOT IN (SELECT value FROM json_each(?))');
   const deleteMissingScenes=database.prepare('DELETE FROM scenes WHERE story_id = ? AND id NOT IN (SELECT value FROM json_each(?))');
   const deleteEmptyCharacters=database.prepare('DELETE FROM characters WHERE story_id = ?');
   const deleteEmptyLocations=database.prepare('DELETE FROM locations WHERE story_id = ?');
+  const deleteEmptyObjects=database.prepare('DELETE FROM objects WHERE story_id = ?');
   const deleteEmptyScenes=database.prepare('DELETE FROM scenes WHERE story_id = ?');
   const deleteStory=database.prepare('DELETE FROM stories WHERE id = ?');
 
@@ -189,6 +221,13 @@ export function createSqliteStore(filePath:string):DbController {
       description:location.description,
       ...imageableFrom(location)
     } satisfies Location));
+    const objects=(objectsStmt.all(id) as ObjectRow[]).map(item=>({
+      id:item.id,
+      name:item.name,
+      description:item.description,
+      appearance:item.appearance,
+      ...imageableFrom(item)
+    } satisfies StoryObject));
     const scenes=(scenesStmt.all(id) as SceneRow[]).map(scene=>({
       id:scene.id,
       order:scene.sort_order,
@@ -196,6 +235,7 @@ export function createSqliteStore(filePath:string):DbController {
       summary:scene.summary,
       visualDescription:scene.visual_description,
       characterIds:(sceneCharsStmt.all(scene.id) as {character_id:string}[]).map(item=>item.character_id),
+      objectIds:parseJson<string[]>(scene.object_ids_json||'[]',[]),
       locationId:scene.location_id||undefined,
       ...imageableFrom(scene)
     } satisfies Scene));
@@ -203,9 +243,11 @@ export function createSqliteStore(filePath:string):DbController {
       id:row.id,
       title:row.title,
       sourceText:row.source_text,
+      premise:row.premise||'',
       updatedAt:row.updated_at,
       characters,
       locations,
+      objects,
       scenes
     }),library);
   };
@@ -214,11 +256,12 @@ export function createSqliteStore(filePath:string):DbController {
     ...project,
     characters:project.characters.map(item=>persistImageable(item,dir)),
     locations:project.locations.map(item=>persistImageable(item,dir)),
+    objects:project.objects.map(item=>persistImageable(item,dir)),
     scenes:project.scenes.map(item=>persistImageable(item,dir))
   });
 
   const writeStory=(project:Project)=>{
-    upsertStory.run(project.id,project.title,project.sourceText,project.updatedAt);
+    upsertStory.run(project.id,project.title,project.sourceText,project.premise||'',project.updatedAt);
     deleteSceneCharacters.run(project.id);
     project.characters.forEach((character,index)=>{
       upsertCharacter.run(
@@ -239,10 +282,19 @@ export function createSqliteStore(filePath:string):DbController {
     if (project.locations.length) deleteMissingLocations.run(project.id,JSON.stringify(project.locations.map(location=>location.id)));
     else deleteEmptyLocations.run(project.id);
 
+    project.objects.forEach((object,index)=>{
+      upsertObject.run(
+        object.id,project.id,object.name,object.description,object.appearance,index,object.imageStatus,
+        object.selectedImage??null,object.imageFile??null,JSON.stringify(object.imageVariants||[])
+      );
+    });
+    if (project.objects.length) deleteMissingObjects.run(project.id,JSON.stringify(project.objects.map(object=>object.id)));
+    else deleteEmptyObjects.run(project.id);
+
     project.scenes.forEach((scene,index)=>{
       upsertScene.run(
         scene.id,project.id,scene.order??index,scene.sourceText,scene.summary,scene.visualDescription,
-        scene.locationId??null,scene.imageStatus,scene.selectedImage??null,scene.imageFile??null,
+        scene.locationId??null,JSON.stringify(scene.objectIds||[]),scene.imageStatus,scene.selectedImage??null,scene.imageFile??null,
         JSON.stringify(scene.imageVariants||[])
       );
       scene.characterIds.forEach((characterId,order)=>insertSceneCharacter.run(scene.id,characterId,order));
@@ -282,6 +334,7 @@ export function createSqliteStore(filePath:string):DbController {
       try {
         deleteSceneCharacters.run(id);
         deleteEmptyScenes.run(id);
+        deleteEmptyObjects.run(id);
         deleteEmptyLocations.run(id);
         deleteEmptyCharacters.run(id);
         const removed=Number(deleteStory.run(id).changes)>0;
@@ -323,10 +376,17 @@ function migrateJsonProjects(database:DatabaseSync) {
   }
 }
 
+function ensureStoryColumns(database:DatabaseSync) {
+  const storyCols=(database.prepare('PRAGMA table_info(stories)').all() as {name:string}[]).map(row=>row.name);
+  if (!storyCols.includes('premise')) database.exec("ALTER TABLE stories ADD COLUMN premise TEXT NOT NULL DEFAULT ''");
+  const sceneCols=(database.prepare('PRAGMA table_info(scenes)').all() as {name:string}[]).map(row=>row.name);
+  if (!sceneCols.includes('object_ids_json')) database.exec("ALTER TABLE scenes ADD COLUMN object_ids_json TEXT NOT NULL DEFAULT '[]'");
+}
+
 function createSqliteStoreWriter(database:DatabaseSync) {
   const upsertStory=database.prepare(`
-    INSERT INTO stories (id, title, source_text, updated_at) VALUES (?, ?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET title = excluded.title, source_text = excluded.source_text, updated_at = excluded.updated_at
+    INSERT INTO stories (id, title, source_text, premise, updated_at) VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET title = excluded.title, source_text = excluded.source_text, premise = excluded.premise, updated_at = excluded.updated_at
   `);
   const upsertCharacter=database.prepare(`
     INSERT INTO characters (id, story_id, name, role, description, appearance, traits_json, is_key, sort_order, image_status, selected_image, image_file, image_variants_json)
@@ -355,7 +415,7 @@ function createSqliteStoreWriter(database:DatabaseSync) {
   `);
   const insertSceneCharacter=database.prepare('INSERT OR IGNORE INTO scene_characters (scene_id, character_id, sort_order) VALUES (?, ?, ?)');
   return (project:Project)=>{
-    upsertStory.run(project.id,project.title,project.sourceText,project.updatedAt);
+    upsertStory.run(project.id,project.title,project.sourceText,project.premise||'',project.updatedAt);
     project.characters.forEach((character,index)=>{
       upsertCharacter.run(
         character.id,project.id,character.name,character.role,character.description,character.appearance,

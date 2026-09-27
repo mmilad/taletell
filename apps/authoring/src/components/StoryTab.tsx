@@ -55,16 +55,17 @@ function GenerateForm({premise,setPremise,tone,setTone,age,setAge,shape,setShape
 
 function AnalyzeActions({words,analyzing,disabled,onAnalyze,onExample}:{words:number;analyzing:boolean;disabled:boolean;onAnalyze:()=>void;onExample:()=>void}){
   return <div className="card-footer">
-    <span>{analyzing?'Reading the story into characters, places, and scenes…':`${words} words`}</span>
+    <span>{analyzing?'Asking the local model to sort characters, places, and objects…':`${words} words`}</span>
     <div className="story-actions">
       <button className="ghost" disabled={analyzing} onClick={onExample}>Load example</button>
-      <button className="primary" disabled={disabled||analyzing} onClick={onAnalyze}>{analyzing?'Analyzing…':<>Analyze story <span>→</span></>}</button>
+      <button className="primary" disabled={disabled&&!analyzing} onClick={onAnalyze}>{analyzing?'Cancel':<>Analyze story <span>→</span></>}</button>
     </div>
   </div>;
 }
 
 export function StoryTab({project,patch,analyze,generate,writing,analyzing,storyStatus,loadExample}:{project:Project;patch:(p:Partial<Project>)=>void;analyze:()=>void;generate:(brief:StoryGenerateBrief)=>void;writing:boolean;analyzing:boolean;storyStatus:StoryStatus;loadExample:()=>void}){
-  const [premise,setPremise]=useState(project.sourceText?`A story like: ${project.title}`:'');
+  const [premise,setPremiseState]=useState(project.premise||'');
+  const setPremise=(value:string)=>{setPremiseState(value);patch({premise:value});}
   const [tone,setTone]=useState<StoryTone>('gentle');
   const [age,setAge]=useState<StoryAge>('5-7');
   const [reuseCast,setReuseCast]=useState(false);
@@ -76,7 +77,7 @@ export function StoryTab({project,patch,analyze,generate,writing,analyzing,story
     paragraphWordsMax:DEFAULT_STORY_SHAPE.paragraphWords.max
   });
   const setShape=(patch:Partial<StoryShapeInput>)=>setShapeState(current=>({...current,...patch}));
-  const hasModules=project.characters.length>0||project.locations.length>0;
+  const hasModules=project.characters.length>0||project.locations.length>0||project.objects.length>0;
   const hasStory=Boolean(project.sourceText.trim()||project.characters.length||project.locations.length||project.scenes.length);
   const writer=storyStatus.ready?`Ollama · ${(storyStatus.model||'local').replace(/:latest$/,'')}`:'Template writer';
   const form={premise,setPremise,tone,setTone,age,setAge,shape,setShape,reuseCast,setReuseCast,hasModules,writing,writer,onGenerate:()=>generate({premise,tone,age,reuseCast,...shape})};
@@ -100,7 +101,13 @@ export function StoryTab({project,patch,analyze,generate,writing,analyzing,story
       <input className="manuscript-title" value={project.title} onChange={e=>patch({title:e.target.value})} placeholder="The title of your story"/>
       <label>STORY FROM PREMISE</label>
       <textarea className="manuscript" value={project.sourceText} onChange={e=>patch({sourceText:e.target.value})} placeholder="The words of the story…"/>
-      <AnalyzeActions words={project.sourceText.trim().split(/\s+/).filter(Boolean).length} analyzing={analyzing} disabled={!project.sourceText.trim()} onAnalyze={analyze} onExample={loadExample}/>
+      <div className="card-footer">
+        <span>{analyzing?'Asking the local model to sort characters, places, and objects…':`${project.sourceText.trim().split(/\s+/).filter(Boolean).length} words`}</span>
+        <div className="story-actions">
+          <button className="ghost" disabled={analyzing} onClick={loadExample}>Load example</button>
+          <button className="ghost" disabled={!project.sourceText.trim()&&!analyzing} onClick={analyze}>{analyzing?'Cancel':'Rebuild modules from this text'}</button>
+        </div>
+      </div>
     </div>
   </>;
 }

@@ -82,19 +82,37 @@ def handle(request):
         default_size=768
         for index in range(count):
             mode=request.get("mode", "composition")
+            user_prompt=request.get("prompt", "")
             if mode == "asset" and subject == "character":
-                instruction="Create one isolated character example. Full body, cream background, no scenery, no extra characters, not a black silhouette."
-            elif mode == "asset":
-                instruction="Create a reusable empty location example with no main characters."
+                instruction="Create one isolated character example. Full body, cream background, no scenery, no extra characters, not a black silhouette. Follow the visual identity above exactly, including species, coat, clothes, and accessory colors."
+                kwargs={
+                    "prompt": user_prompt+"\n"+instruction,
+                    "height": int(request.get("height", default_size)),
+                    "width": int(request.get("width", default_size)),
+                    "num_inference_steps": int(request.get("steps", 4 if "klein" in model_id.lower() else 50)),
+                    "guidance_scale": float(request.get("guidanceScale", 1.0 if "klein" in model_id.lower() else 3.5)),
+                }
+            elif mode == "asset" and subject == "prop":
+                instruction="Create one isolated storybook object on a cream background. No characters, no scenery. Follow the visual identity above exactly."
+                kwargs={
+                    "prompt": user_prompt+"\n"+instruction,
+                    "height": int(request.get("height", default_size)),
+                    "width": int(request.get("width", default_size)),
+                    "num_inference_steps": int(request.get("steps", 4 if "klein" in model_id.lower() else 50)),
+                    "guidance_scale": float(request.get("guidanceScale", 1.0 if "klein" in model_id.lower() else 3.5)),
+                }
             else:
-                instruction="Compose this moment using the attached character examples as identity. Do not change who they are."
-            kwargs={
-                "prompt": instruction+"\n"+request.get("prompt", ""),
-                "height": int(request.get("height", default_size)),
-                "width": int(request.get("width", default_size)),
-                "num_inference_steps": int(request.get("steps", 4 if "klein" in model_id.lower() else 50)),
-                "guidance_scale": float(request.get("guidanceScale", 1.0 if "klein" in model_id.lower() else 3.5)),
-            }
+                if mode == "asset":
+                    instruction="Create a reusable empty location example with no main characters."
+                else:
+                    instruction="Compose this moment using the attached character examples as identity. Do not change who they are."
+                kwargs={
+                    "prompt": instruction+"\n"+user_prompt,
+                    "height": int(request.get("height", default_size)),
+                    "width": int(request.get("width", default_size)),
+                    "num_inference_steps": int(request.get("steps", 4 if "klein" in model_id.lower() else 50)),
+                    "guidance_scale": float(request.get("guidanceScale", 1.0 if "klein" in model_id.lower() else 3.5)),
+                }
             if reference_images:
                 kwargs["image"]=reference_images
             print("[flux] encoding prompt, then denoise. The 4-step bar starts after encoding.", file=sys.stderr, flush=True)

@@ -42,7 +42,10 @@ export function resolveAssetFile(ref?:string,extraDirs:string[]=[]) {
 
 export function importAsset(source:string,id:string,libraryDir:string,variant=0) {
   ensureDir(libraryDir);
-  const destination=path.join(libraryDir,path.basename(libraryUrl(id,variant)));
+  const from=path.basename(source);
+  const keepName=from.startsWith(`${id}-`)&&from.toLowerCase().endsWith('.png');
+  const destName=keepName?from:`${id}-${Date.now().toString(36)}-${variant}.png`;
+  const destination=path.join(libraryDir,destName);
   if (path.resolve(source)!==path.resolve(destination)) fs.copyFileSync(source,destination);
-  return {filePath:destination,url:libraryUrl(id,variant)};
+  return {filePath:destination,url:`/library/${destName}`};
 }
