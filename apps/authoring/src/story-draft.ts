@@ -25,6 +25,7 @@ export type StoryDraft = {
 };
 
 const text = (value:unknown)=>typeof value==='string'?value.replace(/\s+/g,' ').trim():'';
+const prose = (value:unknown)=>typeof value==='string'?value.replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n').trim():'';
 const list = (value:unknown)=>Array.isArray(value)?value:[];
 
 export function extractJson(raw:unknown):unknown {
@@ -52,7 +53,7 @@ function uniqueName(name:string,taken:Set<string>) {
   return `${name} ${index}`;
 }
 
-export function hydrateStoryDraft(raw:unknown,keep?:{characters?:Character[]; locations?:Location[]}):Pick<Project,'title'|'sourceText'|'characters'|'locations'|'scenes'> {
+export function hydrateStoryDraft(raw:unknown,keep?:{characters?:Character[]; locations?:Location[]},pageCount=12):Pick<Project,'title'|'sourceText'|'characters'|'locations'|'scenes'> {
   const draft=asDraft(raw);
   const keptCharacters=keep?.characters||[];
   const keptLocations=keep?.locations||[];
@@ -89,10 +90,10 @@ export function hydrateStoryDraft(raw:unknown,keep?:{characters?:Character[]; lo
 
   const byName=(name:string)=>characters.find(character=>character.name.toLowerCase()===name.toLowerCase());
   const byPlace=(name:string)=>locations.find(location=>location.name.toLowerCase()===name.toLowerCase());
-  const scenes=list(draft.scenes).slice(0,12).flatMap((item,order)=>{
+  const scenes=list(draft.scenes).slice(0,pageCount).flatMap((item,order)=>{
     const incoming=item as StoryDraftScene;
-    const sourceText=text(incoming.sourceText);
-    const summary=text(incoming.summary)||sourceText.slice(0,80);
+    const sourceText=prose(incoming.sourceText);
+    const summary=text(incoming.summary)||sourceText.replace(/\s+/g,' ').slice(0,80);
     if (!sourceText&&!summary) return [];
     const named=list(incoming.characterNames).map(name=>text(name)).filter(Boolean);
     const characterIds=(named.map(byName).filter(Boolean) as Character[]).map(character=>character.id);
@@ -104,11 +105,11 @@ export function hydrateStoryDraft(raw:unknown,keep?:{characters?:Character[]; lo
   });
   if (!scenes.length) throw new Error('The local model did not return any scenes.');
 
-  const sourceText=text(draft.sourceText)||scenes.map(scene=>scene.sourceText).join(' ');
+  const sourceText=prose(draft.sourceText)||scenes.map(scene=>scene.sourceText).join('\n\n');
   const title=text(draft.title)||`${characters[0].name} and the ${locations[0]?.name||'Story'}`;
   return {title,sourceText,characters,locations,scenes};
 }
 
-export function parseStoryDraft(raw:unknown,keep?:{characters?:Character[]; locations?:Location[]}) {
-  return hydrateStoryDraft(extractJson(raw),keep);
+export function parseStoryDraft(raw:unknown,keep?:{characters?:Character[]; locations?:Location[]},pageCount=12) {
+  return hydrateStoryDraft(extractJson(raw),keep,pageCount);
 }

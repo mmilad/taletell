@@ -39,6 +39,31 @@
   height: 280px;
   font-size: 16px;
   line-height: 1.65;
+  white-space: pre-wrap;
+}
+.shape-row {
+  display: flex;
+  gap: 24px;
+  margin: 16px 0 4px;
+  flex-wrap: wrap;
+}
+.shape-pair, .shape-field {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}
+.shape-field {
+  flex-direction: column;
+  gap: 6px;
+  font: 10px "DM Mono";
+  letter-spacing: 0.08em;
+  color: #9a958a;
+}
+.shape-field input {
+  width: 72px;
+  margin: 0;
+  padding: 8px 10px;
+  font-size: 14px;
 }
 @media (max-width: 800px) {
   .hero h1 { font-size: 42px; }

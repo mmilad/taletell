@@ -39,6 +39,7 @@ export function App(){
   const [imageStatus,setImageStatus]=useState<ImageStatus>({ok:false,mode:'mock',ready:false,detail:'Checking image worker…'});
   const [storyStatus,setStoryStatus]=useState<StoryStatus>({ok:false,mode:'template',ready:false,detail:'Checking story writer…'});
   const [writing,setWriting]=useState(false);
+  const [analyzing,setAnalyzing]=useState(false);
   const writeAbort=useRef<AbortController|undefined>(undefined);
   projectRef.current=project;
   const remember=(next:Project,list?:StorySummary[])=>{
@@ -153,12 +154,19 @@ export function App(){
     const hasDrafts=project.characters.length>0||project.locations.length>0||project.scenes.length>0;
     return !hasDrafts||window.confirm('Replace the current story modules? Edited characters, places, and scenes will be overwritten.');
   };
-  const runAnalysis=()=>{
-    if(!project?.sourceText.trim()||!replaceDrafts()) return;
-    patch(analyzeStory(project.sourceText));
-    setTab('story');
+  const runAnalysis=async()=>{
+    if(!project?.sourceText.trim()||analyzing||writing||!replaceDrafts()) return;
+    setAnalyzing(true);
+    await new Promise(resolve=>window.setTimeout(resolve,0));
+    try {
+      const draft=analyzeStory((projectRef.current||project).sourceText);
+      patch(draft);
+      setTab(draft.scenes.length?'scenes':draft.characters.length?'characters':'story');
+    } finally {
+      setAnalyzing(false);
+    }
   };
-  const runStoryGeneration=async(brief:{premise:string;tone:StoryTone;age:StoryAge;reuseCast:boolean})=>{
+  const runStoryGeneration=async(brief:{premise:string;tone:StoryTone;age:StoryAge;reuseCast:boolean;pageCount?:number;paragraphsMin?:number;paragraphsMax?:number;paragraphWordsMin?:number;paragraphWordsMax?:number})=>{
     if(!project||!brief.premise.trim()) return;
     if(writing){
       writeAbort.current?.abort();
@@ -175,6 +183,11 @@ export function App(){
         premise:brief.premise,
         tone:brief.tone,
         age:brief.age,
+        pageCount:brief.pageCount,
+        paragraphsMin:brief.paragraphsMin,
+        paragraphsMax:brief.paragraphsMax,
+        paragraphWordsMin:brief.paragraphWordsMin,
+        paragraphWordsMax:brief.paragraphWordsMax,
         characters:keepCast?latest.characters:undefined,
         locations:keepCast?latest.locations:undefined
       },controller.signal);
@@ -289,7 +302,7 @@ export function App(){
   return <div className="app">
     <header>
       <div className="brand"><span className="mark">✦</span><div><strong>Storyteller</strong><small>authoring studio</small></div></div>
-      <div className="save">{saved?'Saved':'Saving…'}</div>
+      <div className="save">{analyzing?'Analyzing…':saved?'Saved':'Saving…'}</div>
       <span className={storyStatus.ready?'pill ready':'pill'}>{storyStatus.ready?`Ollama · ${(storyStatus.model||'local').replace(/:latest$/,'')}`:writing?'Writing…':'Template stories'}</span>
       <span className={imageStatus.ready?'pill ready':'pill'}>{imageStatus.ready?`Flux · ${imageStatus.gpu||imageStatus.device||'ready'}`:imageStatus.mode==='real'?'Flux starting…':'Mock images'}</span>
       <button className="primary" onClick={()=>{void newStory()}}>New story</button>
@@ -297,7 +310,7 @@ export function App(){
     <main>
       <Library stories={stories} selectedId={project.id} onNew={()=>{void newStory()}} onOpen={id=>{void openStory(id)}} onExport={exportProject} onImport={importProject} onDelete={()=>{void deleteStory()}}/>
       <Workspace title={project.title} tab={tab} tabs={tabs} onTab={setTab}>
-        {tab==='story'&&<StoryTab key={formKey} project={project} patch={patch} analyze={runAnalysis} generate={runStoryGeneration} writing={writing} storyStatus={storyStatus} loadExample={()=>{patch({...exampleStory,characters:[],locations:[],scenes:[]});setTab('story')}}/>}
+        {tab==='story'&&<StoryTab key={formKey} project={project} patch={patch} analyze={()=>{void runAnalysis()}} generate={runStoryGeneration} writing={writing} analyzing={analyzing} storyStatus={storyStatus} loadExample={()=>{patch({...exampleStory,characters:[],locations:[],scenes:[]});setTab('story')}}/>}
         {tab==='characters'&&<CharactersTab project={project} patch={patch} generateAsset={generateAsset} generateKeyExamples={generateKeyExamples} generating={generating}/>}
         {tab==='places'&&<PlacesTab project={project} patch={patch} generateAsset={generateAsset} generating={generating}/>}
         {tab==='scenes'&&<ScenesTab project={project} patch={patch} generateAsset={generateAsset} generateKeyExamples={generateKeyExamples} generating={generating} imageStatus={imageStatus}/>}

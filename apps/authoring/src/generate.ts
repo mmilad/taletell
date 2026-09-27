@@ -1,8 +1,9 @@
 import { createCharacter, createLocation, createScene, type Character, type Location, type Project, type Scene } from './domain';
+import { fitPages, normalizeStoryShape, shapeSceneProse, type StoryShapeInput } from './story-shape';
 
 export type StoryTone = 'gentle'|'adventurous'|'funny';
 export type StoryAge = '3-5'|'5-7'|'7-9';
-export type StoryBrief = {
+export type StoryBrief = StoryShapeInput & {
   premise:string;
   tone?:StoryTone;
   age?:StoryAge;
@@ -445,7 +446,9 @@ function writeArc(brief:StoryBrief,characters:Character[],locations:Location[]) 
       home
     );
   }
-  return beats;
+  const shape=normalizeStoryShape(brief);
+  const pages=fitPages(beats,shape.pageCount);
+  return pages.map(beat=>({...beat,sourceText:shapeSceneProse(beat.sourceText,shape)}));
 }
 
 export function generateScene(input:{beat:string;order:number;characters:Character[];location?:Location}):Scene {
@@ -472,7 +475,7 @@ export function generateStory(brief:StoryBrief):Pick<Project,'title'|'sourceText
   const scenes=beats.map((beat,order)=>createScene({...beat,order}));
   return {
     title:titleFrom(characters[0],locations,premise),
-    sourceText:scenes.map(scene=>scene.sourceText).join(' '),
+    sourceText:scenes.map(scene=>scene.sourceText).join('\n\n'),
     characters,
     locations,
     scenes

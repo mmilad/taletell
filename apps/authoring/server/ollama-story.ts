@@ -1,6 +1,7 @@
 import { generateStory, type StoryAge, type StoryBrief, type StoryTone } from '../src/generate.ts';
 import { parseStoryDraft } from '../src/story-draft.ts';
 import type { Project } from '../src/domain.ts';
+import { describeStoryShape, normalizeStoryShape, shapeSceneProse, type StoryShape } from '../src/story-shape.ts';
 
 export type StoryStatus = {
   ok:boolean;
@@ -73,32 +74,39 @@ export async function getStoryStatus():Promise<StoryStatus> {
   }
 }
 
-function systemPrompt() {
+function systemPrompt(shape:StoryShape) {
   return `You write original children's picture-book stories. Reply with JSON only.
 
 JSON shape:
 {
   "title": "string",
-  "sourceText": "the complete story as 4-8 short paragraphs a parent can read aloud",
+  "sourceText": "the complete story, pages joined with blank lines",
   "characters": [{"name":"Pip","role":"hero","key":true,"description":"who they are","appearance":"one visual identity sentence: species, colors, clothes, face","traits":["curious","kind"]}],
   "locations": [{"name":"Moonlit Forest","description":"visual setting, empty of named characters"}],
   "scenes": [{"summary":"page title","sourceText":"the words on this page","visualDescription":"what the illustration shows","characterNames":["Pip"],"locationName":"Moonlit Forest"}]
 }
 
 Hard rules:
-- Follow the user's premise. Do not replace it with a village fair, school, or lantern-wish plot unless they asked for that.
-- 2 to 4 characters with distinct names, species, and clothes. Never reuse a name.
-- 2 or 3 places that belong in this premise.
-- 6 to 8 picture-book pages covering a beginning, middle, and a safe ending.
+- The premise is the plot contract. Every event it names must happen in the pages, in order.
+- Do not replace it with a village fair, school, or lantern-wish plot unless they asked for that.
+- 2 to 5 characters with distinct names, species, and clothes. Include the people and creatures the premise needs. Never reuse a name.
+- Use the places the premise needs (usually 3 or 4).
+- ${describeStoryShape(shape)}
 - Every scenes[].characterNames value must match a characters[].name exactly. Do not invent extras in scenes.
 - Warm, concrete language for the stated age. No lecture, no real danger.
 - appearance is an identity lock for later image generation.`;
 }
 
-function userPrompt(brief:StoryBrief) {
+function userPrompt(brief:StoryBrief,shape:StoryShape) {
   const tone=brief.tone||'gentle';
   const age=brief.age||'5-7';
-  const lines=[`Premise: ${brief.premise.trim()}`,`Tone: ${tone}`,`Age band: ${age}`];
+  const lines=[
+    `Premise (follow this plot exactly): ${brief.premise.trim()}`,
+    `Tone: ${tone}`,
+    `Age band: ${age}`,
+    describeStoryShape(shape),
+    'Do not repeat padding lines. After they succeed, go home and end.'
+  ];
   if (brief.characters?.length) {
     lines.push('Keep these characters exactly (same names and appearances). Write a new story with them:');
     for (const character of brief.characters) {
@@ -116,8 +124,17 @@ function userPrompt(brief:StoryBrief) {
   return lines.join('\n');
 }
 
-async function chatStory(model:string,brief:StoryBrief,repair?:string) {
-  const messages=[{role:'system',content:systemPrompt()},{role:'user',content:userPrompt(brief)}];
+function shapedDraft(raw:unknown,keep:{characters?:Project['characters'];locations?:Project['locations']}|undefined,shape:StoryShape) {
+  const story=parseStoryDraft(raw,keep,shape.pageCount);
+  const scenes=story.scenes.map(scene=>({
+    ...scene,
+    sourceText:shapeSceneProse(scene.sourceText,shape)
+  }));
+  return {...story,scenes,sourceText:scenes.map(scene=>scene.sourceText).join('\n\n')};
+}
+
+async function chatStory(model:string,brief:StoryBrief,shape:StoryShape,repair?:string) {
+  const messages=[{role:'system',content:systemPrompt(shape)},{role:'user',content:userPrompt(brief,shape)}];
   if (repair) messages.push({role:'user',content:repair});
   const payload=await ollamaJson<OllamaChat>('/api/chat',{
     method:'POST',
@@ -127,7 +144,7 @@ async function chatStory(model:string,brief:StoryBrief,repair?:string) {
       format:'json',
       think:false,
       messages,
-      options:{temperature:0.7,num_predict:2800}
+      options:{temperature:0.7,num_predict:Math.min(8192,2400+shape.pageCount*280)}
     }),
     signal:AbortSignal.timeout(180_000)
   });
@@ -138,6 +155,7 @@ async function chatStory(model:string,brief:StoryBrief,repair?:string) {
 export async function generateLocalStory(brief:StoryBrief):Promise<GeneratedStory> {
   const premise=brief.premise.trim();
   if (!premise) throw new Error('A premise is required to generate a story.');
+  const shape=normalizeStoryShape(brief);
   const status=await getStoryStatus();
   const keep=brief.characters?.length||brief.locations?.length?{characters:brief.characters,locations:brief.locations}:undefined;
   const templated=()=>{
@@ -148,14 +166,20 @@ export async function generateLocalStory(brief:StoryBrief):Promise<GeneratedStor
     if (storyMode()==='ollama') throw new Error(status.error||status.detail||'Ollama is not ready.');
     return templated();
   }
+  const pageRepair=`Return only the JSON object. Write exactly ${shape.pageCount} scenes that complete the premise, with the last scene a finished ending at home. Follow the paragraph rules. No padding refrains.`;
   try {
-    const first=await chatStory(status.model,brief);
+    const first=await chatStory(status.model,brief,shape);
     try {
-      return {...parseStoryDraft(first,keep),mode:'ollama',model:status.model};
+      const story=shapedDraft(first,keep,shape);
+      if (story.scenes.length!==shape.pageCount) {
+        const retry=await chatStory(status.model,brief,shape,`Your previous reply had ${story.scenes.length} scenes. ${pageRepair}`);
+        return {...shapedDraft(retry,keep,shape),mode:'ollama',model:status.model};
+      }
+      return {...story,mode:'ollama',model:status.model};
     } catch (error) {
       const reason=error instanceof Error?error.message:'The story JSON could not be read.';
-      const retry=await chatStory(status.model,brief,`Your previous reply was not usable (${reason}). Return only the JSON object, with characters, locations, and scenes filled in.`);
-      return {...parseStoryDraft(retry,keep),mode:'ollama',model:status.model};
+      const retry=await chatStory(status.model,brief,shape,`Your previous reply was not usable (${reason}). ${pageRepair}`);
+      return {...shapedDraft(retry,keep,shape),mode:'ollama',model:status.model};
     }
   } catch (error) {
     throw error instanceof Error?error:new Error('Local story generation failed.');

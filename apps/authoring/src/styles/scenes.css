@@ -10,7 +10,7 @@
   resize: none;
   height: 31px;
 }
-.source { font-size: 12px; line-height: 1.5; color: #888278; margin: 7px 0 20px; }
+.source { font-size: 12px; line-height: 1.5; color: #888278; margin: 7px 0 20px; white-space: pre-wrap; }
 .scene textarea {
   display: block;
   width: 100%;

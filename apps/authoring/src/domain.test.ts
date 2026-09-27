@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { analyzeStory, createCharacter, createLocation, normalizeProject } from './domain';
 import { characterVisualPrompt, generateCharacter, generateScene, generateStory, missingKeyExamples, sceneVisualPrompt } from './generate';
 import { extractJson, parseStoryDraft } from './story-draft';
+import { normalizeStoryShape, shapeSceneProse } from './story-shape';
 import { createPlaybackManifest } from './playback';
 import { composeImageRequest } from '../../../packages/image-provider/src/prompt';
 describe('MVP project invariants',()=>{it('keeps the authoring model provider-neutral',()=>{const project={sourceText:'A story',characters:[],locations:[],scenes:[]};expect(project).not.toHaveProperty('provider');expect(project.sourceText).toBe('A story')});it('supports non-destructive scene variants conceptually',()=>{const scene={imageStatus:'generated',selectedImage:'variant-a'};const variants=[scene.selectedImage,'variant-b'];expect(variants).toHaveLength(2);expect(scene.selectedImage).toBe('variant-a')})});
@@ -31,7 +32,7 @@ describe('modular generation',()=>{
     expect(story.title.toLowerCase()).toContain('pip');
     expect(story.characters.map(character=>character.name)).toContain('Pip');
     expect(story.characters.every(character=>character.appearance.length>0)).toBe(true);
-    expect(story.scenes.length).toBeGreaterThanOrEqual(5);
+    expect(story.scenes).toHaveLength(8);
     expect(story.scenes.every(scene=>scene.characterIds.every(id=>story.characters.some(character=>character.id===id)))).toBe(true);
     expect(story.scenes.some(scene=>scene.locationId&&story.locations.some(location=>location.id===scene.locationId))).toBe(true);
     expect(story.sourceText).toContain('Pip');
@@ -129,5 +130,52 @@ describe('local story draft',()=>{
     expect(story.characters.map(character=>character.name)).toEqual(['Tomo','Nim']);
     expect(story.locations[0].id).toBe(river.id);
     expect(story.locations.map(location=>location.name)).toEqual(['Singing River','Mossy Trail']);
+  });
+  it('keeps only the requested number of pages',()=>{
+    const story=parseStoryDraft({
+      title:'Short',
+      characters:[{name:'Tomo',appearance:'a tan puppy'}],
+      scenes:[
+        {summary:'One',sourceText:'Tomo walked.'},
+        {summary:'Two',sourceText:'Tomo ran.'},
+        {summary:'Three',sourceText:'Tomo rested.'}
+      ]
+    },undefined,2);
+    expect(story.scenes.map(scene=>scene.summary)).toEqual(['One','Two']);
+  });
+});
+describe('story shape',()=>{
+  it('writes the requested number of pages',()=>{
+    const story=generateStory({premise:'a shy rabbit named Pip who wants to sing at the village fair',pageCount:4});
+    expect(story.scenes).toHaveLength(4);
+  });
+  it('keeps scene paragraphs inside the requested bounds',()=>{
+    const story=generateStory({
+      premise:'a shy rabbit named Pip who wants to sing at the village fair',
+      pageCount:6,
+      paragraphsMin:2,
+      paragraphsMax:2,
+      paragraphWordsMin:12,
+      paragraphWordsMax:40
+    });
+    for (const scene of story.scenes) {
+      const paragraphs=scene.sourceText.split(/\n{2,}/).filter(Boolean);
+      expect(paragraphs.length).toBeGreaterThanOrEqual(1);
+      expect(paragraphs.length).toBeLessThanOrEqual(2);
+      for (const paragraph of paragraphs) {
+        expect(paragraph.trim().split(/\s+/).filter(Boolean).length).toBeLessThanOrEqual(40);
+      }
+    }
+    expect(story.sourceText).not.toMatch(/stayed with the moment/i);
+  });
+  it('does not invent padding sentences when fitting paragraph length',()=>{
+    const shaped=shapeSceneProse('Mia found the red ball under a mushroom.',normalizeStoryShape({
+      paragraphsMin:1,
+      paragraphsMax:2,
+      paragraphWordsMin:18,
+      paragraphWordsMax:40
+    }));
+    expect(shaped).toContain('red ball');
+    expect(shaped).not.toMatch(/stayed with the moment|nothing rushed them|they went on/i);
   });
 });
