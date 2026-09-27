@@ -2,7 +2,7 @@
 
 The worker reads one JSON request per line from stdin and writes one JSON result per line to stdout. It supports `character`, `location`, `prop`, and `scene` subjects, plus typed reference assets and multiple variants.
 
-`npm run image-lab` is only a tiny harness. It does **not** install Flux or make the authoring UI draw real portraits. The authoring app talks to this worker.
+`pnpm run image-lab` is only a tiny harness. It does **not** install Flux or make the authoring UI draw real portraits. The authoring app talks to this worker.
 
 ## Windows + NVIDIA setup
 
@@ -15,7 +15,7 @@ python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements-flux.txt
 ```
 
-Then restart the authoring app. If the `.venv` exists, `npm run dev` now calls this worker in real mode. The first **Generate portrait** downloads `black-forest-labs/FLUX.2-klein-4B` and can take several minutes. Later sheets reuse the loaded pipeline.
+Then restart the authoring app. If the `.venv` exists, `pnpm run dev` now calls this worker in real mode. The first **Generate portrait** downloads `black-forest-labs/FLUX.2-klein-4B` and can take several minutes. Later sheets reuse the loaded pipeline.
 
 Check the worker without opening the UI:
 
