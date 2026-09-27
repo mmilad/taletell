@@ -1,14 +1,16 @@
 {
   "name": "storyteller-workspace",
   "private": true,
-  "workspaces": ["apps/*", "packages/*"],
+  "packageManager": "pnpm@11.4.0",
   "scripts": {
-    "dev": "npm run --workspace storyteller dev",
-    "typecheck": "npm run --workspace storyteller typecheck",
-    "build": "npm run --workspace storyteller build",
-    "test": "npm run --workspace storyteller test",
-    "desktop": "npm run --workspace storyteller desktop",
-    "image-lab": "npm run --workspace @storyteller/image-lab start"
+    "dev": "pnpm --filter storyteller dev",
+    "typecheck": "pnpm --filter storyteller typecheck",
+    "build": "pnpm --filter storyteller build",
+    "test": "pnpm --filter storyteller test",
+    "desktop": "pnpm --filter storyteller desktop",
+    "image-lab": "pnpm --filter @storyteller/image-lab start"
   },
-  "devDependencies": {"@types/node":"latest"}
+  "devDependencies": {
+    "@types/node": "latest"
+  }
 }
